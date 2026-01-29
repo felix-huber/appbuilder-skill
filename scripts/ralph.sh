@@ -67,10 +67,11 @@ PR_BASE_BRANCH="main"  # Base branch for PRs
 VERIFY_BUILD="true"    # Run npm run build after each task (default: true)
 VERIFY_TYPECHECK="true" # Run npm run typecheck after each task (default: true)
 VERIFY_LINT="true"     # Run npm run lint after each task (default: true)
+VERIFY_TESTS="true"    # Run npm test after each task (default: true)
 BUILD_FAIL_COUNT=0     # Track consecutive build failures
 
 # Council of Subagents review (multi-agent verification pattern)
-# Uses specialized subagents: Analyst (quality), Sentinel (anti-patterns), Healer (fixes)
+# Uses specialized subagents: Analyst (quality), Sentinel (anti-patterns), Designer (UI), Healer (fixes)
 COUNCIL_REVIEW="false"  # Set to "true" to run council review after each task
 
 # Colors
@@ -184,6 +185,14 @@ parse_args() {
         VERIFY_LINT="false"
         shift
         ;;
+      --verify-tests)
+        VERIFY_TESTS="true"
+        shift
+        ;;
+      --no-verify-tests)
+        VERIFY_TESTS="false"
+        shift
+        ;;
       --council-review)
         COUNCIL_REVIEW="true"
         shift
@@ -264,7 +273,9 @@ Options:
   --no-verify-typecheck        Disable typecheck verification
   --verify-lint                Enable lint verification (default: on)
   --no-verify-lint             Disable lint verification
-  --council-review             Enable Council of Subagents review (Analyst/Sentinel/Healer)
+  --verify-tests               Enable test verification (default: on)
+  --no-verify-tests            Disable test verification
+  --council-review             Enable Council of Subagents review (Analyst/Sentinel/Designer/Healer)
   --no-council-review          Disable council review (default)
   -h, --help                   Show this help
 
@@ -301,17 +312,25 @@ Build Verification (enabled by default):
   1. Run npm run lint     → Catch code quality issues
   2. Run npm run typecheck → Catch TypeScript errors
   3. Run npm run build    → Catch build errors
-  4. Detect anti-patterns  → Disabled lint rules, weakened tsconfig
+  4. Run npm run test     → Verify TDD tests pass
+  5. Detect anti-patterns  → Disabled lint rules, weakened tsconfig
   If ANY step fails, the task is marked FAILED even if agent said complete.
-  Use --no-verify-build etc to disable specific checks.
+  Use --no-verify-build, --no-verify-tests, etc to disable specific checks.
 
 Council of Subagents Review (--council-review):
-  Multi-agent verification pattern using three specialized roles:
+  Multi-agent verification pattern using four specialized roles:
   1. Analyst: Reviews code quality, correctness, architecture
   2. Sentinel: Detects anti-patterns, shortcuts, security issues
-  3. Healer: Fixes issues found by Analyst/Sentinel
+  3. Designer: Reviews UI/UX quality (Stripe-level bar) - only for UI tasks
+  4. Healer: Fixes issues found by other subagents
   Adds time but catches issues that single-agent review misses.
   See docs/AGENT_EVALUATION.md for details.
+
+UI Quality (automatic for frontend tasks):
+  When task tags include ui, component, frontend, design, css, style, or ux:
+  - UI quality requirements are automatically injected into the prompt
+  - Designer subagent reviews for Stripe/Linear/Vercel quality bar
+  - Covers visual polish, micro-interactions, accessibility, responsiveness
 
 Self-Healing (enabled by default):
   Ralph monitors task execution and auto-recovers stuck tasks:
@@ -349,6 +368,7 @@ Environment Variables:
   VERIFY_BUILD     "false" to disable build verification
   VERIFY_TYPECHECK "false" to disable typecheck verification
   VERIFY_LINT      "false" to disable lint verification
+  VERIFY_TESTS     "false" to disable test verification
 
 Examples:
   ./scripts/ralph.sh 50                    # 50 iterations, smart routing (default)
@@ -691,16 +711,18 @@ run_with_tool() {
 }
 
 # Council of Subagents Review Pattern
-# Uses three specialized subagent roles to verify task completion:
+# Uses four specialized subagent roles to verify task completion:
 #   - Analyst: Reviews code quality, correctness, architecture
 #   - Sentinel: Watches for anti-patterns, security issues, shortcuts
-#   - Healer: Fixes issues found by Analyst/Sentinel
+#   - Designer: Reviews UI/UX quality (only for UI-tagged tasks)
+#   - Healer: Fixes issues found by Analyst/Sentinel/Designer
 #
 # Based on research from multi-agent evaluation patterns.
 # See: docs/AGENT_EVALUATION.md
 run_council_review() {
   local task_id="$1"
   local tool="${2:-claude}"  # Default to Claude for reviews
+  local task_tags="${3:-}"   # Task tags to determine if Designer review needed
   local log_file="$LOGS_DIR/${task_id}-council.log"
 
   # Ensure log directory exists
@@ -857,13 +879,83 @@ Be strict. These patterns cause production failures."
   fi
 
   # ═══════════════════════════════════════════════════════════════
+  # DESIGNER: Review UI/UX quality (only for UI-tagged tasks)
+  # ═══════════════════════════════════════════════════════════════
+  local is_ui_task=false
+  if echo "$task_tags" | grep -qiE "ui|component|frontend|design|css|style|ux"; then
+    is_ui_task=true
+  fi
+
+  if [[ "$is_ui_task" == "true" ]]; then
+    log_info "🎨 Designer: Reviewing UI/UX quality (Stripe-level bar)..."
+
+    local designer_prompt="You are the DESIGNER subagent in a code review council.
+Your role: Ensure WORLD-CLASS UI/UX quality at the Stripe/Linear level.
+
+CHANGED FILES:
+$changed_files
+
+DIFF:
+$diff_content
+
+You must do a spectacular job reviewing for absolutely world-class UI/UX quality.
+Apply an intense focus on the most visually appealing, user-friendly, intuitive,
+slick, polished, \"Stripe level\" of quality possible.
+
+Review for:
+1. **Visual Polish**: Spacing, alignment, typography, color harmony
+2. **Micro-interactions**: Hover states, transitions, loading states, animations
+3. **Accessibility**: Color contrast, focus states, screen reader support
+4. **Responsiveness**: Mobile-first, breakpoints, touch targets
+5. **Consistency**: Design system adherence, component reuse
+6. **Delight**: Does it feel premium? Would a designer be proud of this?
+7. **Edge Cases**: Empty states, error states, long content, RTL support
+
+Quality bar examples (what we're aiming for):
+- Stripe: Clean, confident, spacious, purposeful animations
+- Linear: Fast, keyboard-first, beautiful dark mode, crisp icons
+- Vercel: Minimal, elegant, excellent typography, subtle gradients
+
+Output format:
+If UI/UX issues found:
+DESIGNER_ISSUES:
+- [severity] file:line - description (with specific fix suggestion)
+
+If the UI meets the quality bar:
+DESIGNER_OK
+
+Be demanding. We want users to say \"wow\" when they see this UI."
+
+    set +e
+    local designer_output
+    designer_output=$(run_with_tool "$tool" "$designer_prompt" 2>&1)
+    set -e
+
+    {
+      echo "=== DESIGNER REVIEW ==="
+      echo "$designer_output"
+      echo ""
+    } >> "$log_file"
+
+    if echo "$designer_output" | grep -q "DESIGNER_ISSUES"; then
+      issues_found=true
+      council_issues+="DESIGNER found UI/UX issues:"$'\n'
+      council_issues+=$(echo "$designer_output" | grep -A 50 "DESIGNER_ISSUES" | head -20)
+      council_issues+=$'\n\n'
+      log_warn "  Designer found UI/UX issues"
+    else
+      log_success "  Designer: ✅ UI/UX meets quality bar"
+    fi
+  fi
+
+  # ═══════════════════════════════════════════════════════════════
   # HEALER: Fix issues if found
   # ═══════════════════════════════════════════════════════════════
   if [[ "$issues_found" == "true" ]]; then
     log_info "💊 Healer: Attempting to fix issues..."
 
     local healer_prompt="You are the HEALER subagent in a code review council.
-The ANALYST and SENTINEL found the following issues that need fixing:
+The ANALYST, SENTINEL, and DESIGNER found the following issues that need fixing:
 
 $council_issues
 
@@ -1335,7 +1427,7 @@ create_auto_pr() {
   log_info "Creating PR for task $task_id..."
   
   # First, stash any uncommitted changes
-  git stash push -m "ralph-auto-pr-temp" 2>/dev/null || true
+  git stash push -u -m "ralph-auto-pr-temp" 2>/dev/null || true
   
   # Switch to base branch and pull latest
   git checkout "${PR_BASE_BRANCH:-main}" 2>/dev/null || {
@@ -1622,10 +1714,45 @@ verify_build() {
     fi
   fi
 
+  # Step 3: Run Tests (CRITICAL for TDD verification)
+  local tests_passed=true
+  if [[ "${VERIFY_TESTS:-true}" == "true" ]]; then
+    log_info "Running tests..."
+
+    if has_npm_script "test"; then
+      set +e
+      local test_output
+      test_output=$(npm run test 2>&1)
+      local test_exit=$?
+      set -e
+
+      if [[ $test_exit -eq 0 ]]; then
+        log_success "✅ Tests PASSED"
+      else
+        log_error "❌ Tests FAILED"
+        tests_passed=false
+        # Show first few failure lines
+        echo "$test_output" | grep -iE "fail|error|✗" | head -5 | while read -r line; do
+          log_error "   $line"
+        done
+      fi
+
+      # Log full output
+      {
+        echo "=== Test Output ==="
+        echo "$test_output"
+        echo ""
+      } >> "$log_file"
+    else
+      log_info "⏭️ Tests skipped (no test script)"
+    fi
+  fi
+
   # Check if we actually ran any verification
   local ran_lint=false
   local ran_typecheck=false
   local ran_build=false
+  local ran_tests=false
 
   if [[ "${VERIFY_LINT:-true}" == "true" ]] && has_npm_script "lint"; then
     ran_lint=true
@@ -1641,8 +1768,12 @@ verify_build() {
     ran_build=true
   fi
 
-  if [[ "$ran_lint" == "false" && "$ran_typecheck" == "false" && "$ran_build" == "false" ]]; then
-    log_warn "⚠️ No verification was performed (no lint, typecheck, or build scripts found)"
+  if [[ "${VERIFY_TESTS:-true}" == "true" ]] && has_npm_script "test"; then
+    ran_tests=true
+  fi
+
+  if [[ "$ran_lint" == "false" && "$ran_typecheck" == "false" && "$ran_build" == "false" && "$ran_tests" == "false" ]]; then
+    log_warn "⚠️ No verification was performed (no lint, typecheck, build, or test scripts found)"
     log_warn "   Consider adding these scripts to package.json"
   fi
 
@@ -1709,7 +1840,7 @@ verify_build() {
   fi
 
   # Determine overall result
-  if [[ "$lint_passed" == "true" && "$typecheck_passed" == "true" && "$build_passed" == "true" ]]; then
+  if [[ "$lint_passed" == "true" && "$typecheck_passed" == "true" && "$build_passed" == "true" && "$tests_passed" == "true" ]]; then
     log_success "╔════════════════════════════════════════════════════════════════╗"
     log_success "║           ✅ BUILD VERIFICATION PASSED                         ║"
     log_success "╚════════════════════════════════════════════════════════════════╝"
@@ -1732,6 +1863,7 @@ verify_build() {
       echo "- Lint: $([ "$lint_passed" == "true" ] && echo "PASS" || echo "FAIL")"
       echo "- TypeCheck: $([ "$typecheck_passed" == "true" ] && echo "PASS" || echo "FAIL")"
       echo "- Build: $([ "$build_passed" == "true" ] && echo "PASS" || echo "FAIL")"
+      echo "- Tests: $([ "$tests_passed" == "true" ] && echo "PASS" || echo "FAIL")"
       echo "- Consecutive failures: $BUILD_FAIL_COUNT"
     } >> "$PROGRESS_FILE"
 
@@ -1875,13 +2007,47 @@ echo ""
 fi
 fi)
 
+$(# Inject UI quality requirements for frontend tasks
+if echo "$tags" | grep -qiE "ui|component|frontend|design|css|style|ux"; then
+cat << 'UIQUALITY'
+## 🎨 UI/UX Quality Requirements (CRITICAL)
+
+This is a UI task. You must do a **spectacular job** building absolutely world-class
+UI/UX components with an intense focus on making the most visually appealing,
+user-friendly, intuitive, slick, polished, "Stripe level" of quality possible.
+
+**Quality Bar** (what we're aiming for):
+- **Stripe**: Clean, confident, spacious, purposeful animations
+- **Linear**: Fast, keyboard-first, beautiful dark mode, crisp icons
+- **Vercel**: Minimal, elegant, excellent typography, subtle gradients
+
+**Mandatory Considerations**:
+1. **Visual Polish**: Perfect spacing, alignment, typography, color harmony
+2. **Micro-interactions**: Smooth hover states, transitions, loading states
+3. **Accessibility**: WCAG compliance, focus states, screen reader support
+4. **Responsiveness**: Mobile-first, proper breakpoints, touch-friendly
+5. **Consistency**: Follow existing design system and component patterns
+6. **Delight**: Make it feel premium - users should say "wow"
+
+**Edge Cases to Handle**:
+- Empty states (no data)
+- Loading states (skeleton, spinner)
+- Error states (clear, actionable)
+- Long content (truncation, overflow)
+- Keyboard navigation
+
+Leverage the good libraries already in the project. Do not compromise on quality.
+UIQUALITY
+fi)
+
 ## Instructions
 
 1. Review the context above from previous iterations
 2. Implement the task following the description
 3. Run the verification commands to confirm success
 4. **MANDATORY: Run build verification** (see below)
-5. If all verifications pass, commit your changes with message: "feat($task_id): $subject"
+5. If all verifications pass, output <promise>TASK_COMPLETE</promise>
+   (Do NOT commit or push - Ralph handles branching/commits/PRs)
 
 ## Critical Rules
 
@@ -1942,8 +2108,9 @@ If you discover something useful, output it with a marker:
 
 ## When Complete
 
-If ALL verification commands pass, build passes, and you've committed:
+If ALL verification commands pass and build passes:
 Output exactly: <promise>TASK_COMPLETE</promise>
+(Do NOT commit - Ralph handles git operations via auto-PR)
 
 If you cannot complete the task:
 Output exactly: <promise>TASK_FAILED</promise>
@@ -2146,30 +2313,9 @@ main() {
     if echo "$OUTPUT" | grep -q "<promise>TASK_COMPLETE</promise>"; then
       log_info "Agent reports task complete. Verifying build..."
 
-      # CRITICAL: Verify build BEFORE marking task as completed
+      # CRITICAL: Verify build BEFORE any reviews
       # This catches TypeScript errors, broken imports, and integration issues
-      if verify_build "$task_id"; then
-        # Build passed - mark task as completed
-        mark_task_completed "$task_id"
-
-        # Clear stall tracking
-        clear_task_tracking "$task_id"
-
-        # Log to progress
-        {
-          echo ""
-          echo "### Iteration $i - $(date -Iseconds)"
-          echo "- Task: $task_id - $subject"
-          echo "- Tool: $selected_tool"
-          echo "- Status: ✅ COMPLETED"
-          echo "- Build: ✅ VERIFIED"
-        } >> "$PROGRESS_FILE"
-
-        log_success "Task completed and build verified!"
-
-        # Capture learnings from task execution
-        capture_learnings "$task_id" "$subject" "$selected_tool" "$OUTPUT"
-      else
+      if ! verify_build "$task_id"; then
         # Build failed - task is NOT complete despite agent's claim
         log_error "Build verification FAILED - task is NOT complete!"
         log_error "The agent said TASK_COMPLETE but the code doesn't compile."
@@ -2188,7 +2334,7 @@ main() {
           echo "- Tool: $selected_tool"
           echo "- Status: ❌ FAILED (build verification)"
           echo "- Agent said: TASK_COMPLETE"
-          echo "- But: Build/typecheck failed"
+          echo "- But: Build/typecheck/tests failed"
         } >> "$PROGRESS_FILE"
 
         # Check if too many consecutive build failures
@@ -2198,29 +2344,33 @@ main() {
           log_error "Consider manual intervention."
         fi
 
-        # Skip fresh eyes and auto-PR for failed tasks
+        # Skip reviews and auto-PR for failed tasks
         print_status
         sleep 2
         continue
       fi
 
+      log_success "Initial build verification passed!"
+
+      # REVIEWS RUN BEFORE MARKING COMPLETE
+      # Reviews may modify code (Healer), so we re-verify after
+
       # COUNCIL OF SUBAGENTS REVIEW (if enabled)
-      # Uses specialized subagents: Analyst (quality), Sentinel (anti-patterns), Healer (fixes)
-      # See docs/AGENT_EVALUATION.md for details
+      # Uses specialized subagents: Analyst (quality), Sentinel (anti-patterns), Designer (UI), Healer (fixes)
+      local ran_reviews=false
       if [[ "${COUNCIL_REVIEW:-false}" == "true" ]]; then
+        ran_reviews=true
         local review_tool="${REVIEW_TOOL:-$selected_tool}"
         log_info "Running Council of Subagents review..."
-        if ! run_council_review "$task_id" "$review_tool"; then
+        if ! run_council_review "$task_id" "$review_tool" "$tags"; then
           log_error "Council review found unfixable issues!"
-          # Don't fail the task, but log warning
           log_warn "Consider manual review of council findings"
         fi
       fi
 
       # FRESH EYES REVIEW (if enabled)
-      # Per Doodlestein methodology: review code after each task until no bugs found
-      # Supports cross-model review: code with Claude, review with Codex (or vice versa)
       if [[ "${FRESH_EYES:-false}" == "true" ]]; then
+        ran_reviews=true
         local review_tool="${REVIEW_TOOL:-$selected_tool}"
         if [[ -n "$REVIEW_TOOL" && "$REVIEW_TOOL" != "$selected_tool" ]]; then
           log_info "Cross-model review: coded with $selected_tool, reviewing with $review_tool"
@@ -2229,12 +2379,74 @@ main() {
         fi
         run_fresh_eyes_review "$review_tool"
       fi
-      
+
+      # RE-VERIFY after reviews (Healer may have modified code)
+      if [[ "$ran_reviews" == "true" ]]; then
+        log_info "Re-verifying build after reviews..."
+        if ! verify_build "$task_id"; then
+          log_error "Post-review verification FAILED!"
+          log_error "Reviews may have introduced issues."
+          mark_task_failed "$task_id"
+          clear_task_tracking "$task_id"
+          {
+            echo ""
+            echo "### Iteration $i - $(date -Iseconds)"
+            echo "- Task: $task_id - $subject"
+            echo "- Tool: $selected_tool"
+            echo "- Status: ❌ FAILED (post-review verification)"
+          } >> "$PROGRESS_FILE"
+          print_status
+          sleep 2
+          continue
+        fi
+        log_success "Post-review verification passed!"
+      fi
+
+      # ALL CHECKS PASSED - Now mark task as completed
+      mark_task_completed "$task_id"
+
+      # Clear stall tracking
+      clear_task_tracking "$task_id"
+
+      # Log to progress
+      {
+        echo ""
+        echo "### Iteration $i - $(date -Iseconds)"
+        echo "- Task: $task_id - $subject"
+        echo "- Tool: $selected_tool"
+        echo "- Status: ✅ COMPLETED"
+        echo "- Build: ✅ VERIFIED"
+      } >> "$PROGRESS_FILE"
+
+      log_success "Task completed and all verifications passed!"
+
+      # Capture learnings from task execution
+      capture_learnings "$task_id" "$subject" "$selected_tool" "$OUTPUT"
+
       # AUTO-PR: Create PR for completed task
       if [[ "${AUTO_PR:-true}" == "true" ]]; then
         create_auto_pr "$task_id" "$subject"
       fi
       
+    elif echo "$OUTPUT" | grep -q "<promise>TASK_BLOCKED</promise>"; then
+      # Agent reported task is blocked (needs clarification, external dependency, etc.)
+      mark_task_failed "$task_id"
+
+      # Clear stall tracking
+      clear_task_tracking "$task_id"
+
+      # Log to progress
+      {
+        echo ""
+        echo "### Iteration $i - $(date -Iseconds)"
+        echo "- Task: $task_id - $subject"
+        echo "- Tool: $selected_tool"
+        echo "- Status: ⛔ BLOCKED (agent reported)"
+      } >> "$PROGRESS_FILE"
+
+      log_warn "Task blocked. Agent needs clarification or external dependency."
+      log_warn "Check agent output for what is needed to proceed."
+
     elif echo "$OUTPUT" | grep -q "<promise>TASK_FAILED</promise>"; then
       mark_task_failed "$task_id"
 

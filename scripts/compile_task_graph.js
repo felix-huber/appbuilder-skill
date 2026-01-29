@@ -48,14 +48,15 @@ function readJson(p) {
 
 /**
  * Parse task seeds from plan.md
- * 
+ *
  * Supported formats:
  *   - [ ] tag1,tag2 :: Subject          (recommended)
  *   - [ ] <tag1,tag2> :: Subject        (legacy, still supported)
- * 
+ *
  * Optional metadata lines:
  *   - ID: T-001
- *   - Blocked by: T-000, T-123
+ *   - Blocked by: T-000, T-123         (or "DependsOn:" - both supported)
+ *   - DependsOn: T-000, T-123          (alias for "Blocked by")
  *   - Deliverable: ...
  *   - Allowed paths: ...
  *   - Verification: ...
@@ -148,7 +149,8 @@ function parsePlanSeeds(planTxt) {
       //   - **Field:** value     (colon inside bold - natural markdown)
       //   - **Field**: value     (colon outside bold)
       //   - Field: value         (no bold)
-      const fieldNames = 'ID|Blocked by|Deliverable|Allowed paths|Verification|Setup';
+      // Note: Both "Blocked by" and "DependsOn" are supported for dependencies
+      const fieldNames = 'ID|Blocked by|DependsOn|Deliverable|Allowed paths|Verification|Setup';
       // Format: - **Field:** value (colon inside bold)
       const d1 = l.match(new RegExp(`^\\s*-\\s*\\*\\*(${fieldNames}):\\*\\*\\s*(.*)\\s*$`, 'i'));
       // Format: - **Field**: value (colon outside bold)  
@@ -164,9 +166,11 @@ function parsePlanSeeds(planTxt) {
           currentField = "id";
           details.id = val;
         }
-        if (key === "blocked by") {
+        if (key === "blocked by" || key === "dependson") {
           currentField = "blockedBy";
-          details.blockedBy = val ? val.split(",").map(s => s.trim()).filter(Boolean) : [];
+          // Merge with existing blockedBy (in case both formats are used)
+          const newDeps = val ? val.split(",").map(s => s.trim()).filter(Boolean) : [];
+          details.blockedBy = [...new Set([...details.blockedBy, ...newDeps])];
         }
         if (key === "deliverable") {
           currentField = "deliverable";

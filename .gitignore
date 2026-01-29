@@ -1,2 +1,10 @@
-.beads/
+# Beads - track JSONL exports, ignore DB and logs
+.beads/beads.db
+.beads/logs/
+
+# Ralph local tracking
+.ralph-task-tracking.json
+progress.txt
+
+# OS
 .DS_Store

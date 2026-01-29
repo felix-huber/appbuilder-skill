@@ -41,13 +41,21 @@ You are implementing a specific task from a development plan.
 
 ## Instructions
 
-### TDD Workflow (for feature tasks with Unit Test Specs)
-If this task has UNIT TEST SPECS in the description:
-1. Create test file FIRST with all specified tests
-2. Run tests - they should FAIL (red phase)
-3. Implement code to make tests pass (green phase)
-4. Refactor if needed
-5. Continue to verification below
+### TDD Workflow (MANDATORY for feature/component/api tasks)
+
+Determine if this is a testable task by checking tags:
+- Tags containing: core, engine, api, components, ui, worker, data → **TDD REQUIRED**
+- Tags containing: setup, config, docs, integration, verify → TDD optional
+
+**If TDD is required:**
+1. Create test file FIRST (e.g., `feature.test.ts` next to `feature.ts`)
+2. Write tests based on acceptance criteria or provided test specs
+3. Run tests - they should FAIL (red phase)
+4. Implement code to make tests pass (green phase)
+5. Refactor if needed
+6. Continue to verification below
+
+**If you skip TDD, explain why in your completion message.**
 
 ### Standard Workflow
 1. Read `progress.txt` for learnings from previous tasks
@@ -75,23 +83,31 @@ If you encounter an error:
 1. Read the error message carefully
 2. Check if it's a missing dependency (install it)
 3. Check if it's a type error (fix the types)
-4. If stuck for >5 minutes, document the blocker and output: TASK_BLOCKED
+4. If stuck for >5 minutes, document the blocker and output: `<promise>TASK_BLOCKED</promise>`
 
 ## When Complete
 
-If ALL acceptance criteria are met and verification passes:
+If ALL acceptance criteria are met and verification passes, output exactly:
 
+```xml
+<promise>TASK_COMPLETE</promise>
 ```
-TASK_COMPLETE
+
+Then include details:
+```
 Files modified: [list]
 Commit: [hash]
 Learnings: [any gotchas discovered]
 ```
 
-If blocked:
+If blocked, output exactly:
 
+```xml
+<promise>TASK_BLOCKED</promise>
 ```
-TASK_BLOCKED
+
+Then include details:
+```
 Blocker: [description]
 Attempted: [what you tried]
 Needs: [what's required to unblock]

@@ -177,15 +177,16 @@ For complex validation, use specialized subagents:
 ### The Pattern
 
 ```
-    ┌──────────────┐
-    │ Orchestrator │
-    └──────┬───────┘
-           │
-     ┌─────┼─────┐
-     ▼     ▼     ▼
-┌─────────┐ ┌──────────┐ ┌────────┐
-│ Analyst │ │ Sentinel │ │ Healer │
-└─────────┘ └──────────┘ └────────┘
+            ┌──────────────┐
+            │ Orchestrator │
+            └──────┬───────┘
+                   │
+       ┌───────┬───┴───┬───────┐
+       ▼       ▼       ▼       ▼
+┌─────────┐ ┌──────────┐ ┌──────────┐ ┌────────┐
+│ Analyst │ │ Sentinel │ │ Designer │ │ Healer │
+└─────────┘ └──────────┘ └──────────┘ └────────┘
+                         (UI tasks)
 ```
 
 ### Roles
@@ -201,7 +202,14 @@ For complex validation, use specialized subagents:
    - Test skipping?
    - Security vulnerabilities?
 
-3. **Healer**: Fixes issues found by Analyst/Sentinel
+3. **Designer**: Reviews UI/UX quality (only for UI-tagged tasks)
+   - Visual polish: spacing, alignment, typography, color harmony
+   - Micro-interactions: hover states, transitions, loading states
+   - Accessibility: WCAG, focus states, screen reader support
+   - Responsiveness: mobile-first, breakpoints, touch targets
+   - Quality bar: Stripe/Linear/Vercel level
+
+4. **Healer**: Fixes issues found by other subagents
    - Applies targeted fixes
    - Re-runs verification
    - Escalates if unfixable
