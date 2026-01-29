@@ -62,6 +62,73 @@ mkdir -p "$OUTPUT_DIR"
 
 print_box "DEVIN CODE REVIEW"
 
+resolve_pr_input() {
+  local input="$1"
+
+  if [[ -z "$input" ]] && command -v gh &> /dev/null; then
+    input=$(gh pr view --json url -q .url 2>/dev/null || echo "")
+  fi
+
+  if [[ -z "$input" ]]; then
+    return 1
+  fi
+
+  if [[ "$input" =~ ^https://github\.com/([^/]+)/([^/]+)/pull/([0-9]+) ]]; then
+    OWNER="${BASH_REMATCH[1]}"
+    REPO="${BASH_REMATCH[2]}"
+    PR_NUMBER="${BASH_REMATCH[3]}"
+    GITHUB_URL="$input"
+    DEVIN_URL="https://devin.ai/${OWNER}/${REPO}/pull/${PR_NUMBER}"
+    return 0
+  fi
+
+  if [[ "$input" =~ ^([^/]+)/([^#]+)#([0-9]+)$ ]]; then
+    OWNER="${BASH_REMATCH[1]}"
+    REPO="${BASH_REMATCH[2]}"
+    PR_NUMBER="${BASH_REMATCH[3]}"
+    GITHUB_URL="https://github.com/${OWNER}/${REPO}/pull/${PR_NUMBER}"
+    DEVIN_URL="https://devin.ai/${OWNER}/${REPO}/pull/${PR_NUMBER}"
+    return 0
+  fi
+
+  if [[ "$input" =~ ^[0-9]+$ ]]; then
+    PR_NUMBER="$input"
+
+    if command -v gh &> /dev/null; then
+      REPO_INFO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "")
+      if [ -n "$REPO_INFO" ]; then
+        OWNER=$(echo "$REPO_INFO" | cut -d'/' -f1)
+        REPO=$(echo "$REPO_INFO" | cut -d'/' -f2)
+      fi
+    fi
+
+    if [ -z "$OWNER" ] || [ -z "$REPO" ]; then
+      REMOTE_URL=$(git remote get-url origin 2>/dev/null || echo "")
+      if [[ "$REMOTE_URL" =~ github\.com[:/]([^/]+)/(.+?)(\.git)?$ ]]; then
+        OWNER="${BASH_REMATCH[1]}"
+        REPO="${BASH_REMATCH[2]}"
+        REPO="${REPO%.git}"
+      fi
+    fi
+
+    if [ -z "$OWNER" ] || [ -z "$REPO" ]; then
+      return 2
+    fi
+
+    GITHUB_URL="https://github.com/${OWNER}/${REPO}/pull/${PR_NUMBER}"
+    DEVIN_URL="https://devin.ai/${OWNER}/${REPO}/pull/${PR_NUMBER}"
+    return 0
+  fi
+
+  return 3
+}
+
+OWNER=""
+REPO=""
+PR_NUMBER=""
+GITHUB_URL=""
+DEVIN_URL=""
+
 # Try CLI first (preferred)
 if [[ "$USE_WEB" == "false" ]] && command -v npx &> /dev/null; then
   echo ""
@@ -69,10 +136,16 @@ if [[ "$USE_WEB" == "false" ]] && command -v npx &> /dev/null; then
   echo -e "${CYAN}This analyzes your PR locally with deep context.${NC}"
   echo ""
   
+  resolve_pr_input "$PR_INPUT"
+  if [[ -z "$GITHUB_URL" ]]; then
+    echo -e "${RED}ERROR: Provide a PR URL/number or run from a branch with an open PR.${NC}"
+    exit 1
+  fi
+
   # Run devin-review CLI
   # It opens a localhost server and analyzes the PR
   set +e
-  npx devin-review 2>&1 | tee "$OUTPUT_DIR/cli-output.log"
+  npx devin-review "$GITHUB_URL" 2>&1 | tee "$OUTPUT_DIR/cli-output.log"
   CLI_EXIT=$?
   set -e
   
@@ -84,13 +157,10 @@ if [[ "$USE_WEB" == "false" ]] && command -v npx &> /dev/null; then
     echo "Severe bugs will be highlighted in red."
     echo ""
     
-    # Try to detect PR number for filename
-    if [[ -n "$PR_INPUT" ]]; then
-      PR_NUMBER="$PR_INPUT"
-    else
-      PR_NUMBER=$(gh pr view --json number -q .number 2>/dev/null || echo "unknown")
+    if [[ -z "$PR_NUMBER" ]]; then
+      PR_NUMBER="unknown"
     fi
-    
+
     # Save a record
     cat > "$OUTPUT_DIR/pr-${PR_NUMBER}-review.md" << EOF
 # Devin Review: PR #${PR_NUMBER}
@@ -138,54 +208,9 @@ if [ -z "$PR_INPUT" ]; then
   fi
 fi
 
-# Parse PR input into GitHub URL
-GITHUB_URL=""
-DEVIN_URL=""
-PR_NUMBER=""
-
-if [[ "$PR_INPUT" =~ ^https://github\.com/([^/]+)/([^/]+)/pull/([0-9]+) ]]; then
-  OWNER="${BASH_REMATCH[1]}"
-  REPO="${BASH_REMATCH[2]}"
-  PR_NUMBER="${BASH_REMATCH[3]}"
-  GITHUB_URL="$PR_INPUT"
-  DEVIN_URL="https://devin.ai/${OWNER}/${REPO}/pull/${PR_NUMBER}"
-elif [[ "$PR_INPUT" =~ ^([^/]+)/([^#]+)#([0-9]+)$ ]]; then
-  OWNER="${BASH_REMATCH[1]}"
-  REPO="${BASH_REMATCH[2]}"
-  PR_NUMBER="${BASH_REMATCH[3]}"
-  GITHUB_URL="https://github.com/${OWNER}/${REPO}/pull/${PR_NUMBER}"
-  DEVIN_URL="https://devin.ai/${OWNER}/${REPO}/pull/${PR_NUMBER}"
-elif [[ "$PR_INPUT" =~ ^[0-9]+$ ]]; then
-  PR_NUMBER="$PR_INPUT"
-  
-  # Get repo from gh CLI or git remote
-  if command -v gh &> /dev/null; then
-    REPO_INFO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "")
-    if [ -n "$REPO_INFO" ]; then
-      OWNER=$(echo "$REPO_INFO" | cut -d'/' -f1)
-      REPO=$(echo "$REPO_INFO" | cut -d'/' -f2)
-    fi
-  fi
-  
-  if [ -z "$OWNER" ] || [ -z "$REPO" ]; then
-    REMOTE_URL=$(git remote get-url origin 2>/dev/null || echo "")
-    if [[ "$REMOTE_URL" =~ github\.com[:/]([^/]+)/(.+?)(\.git)?$ ]]; then
-      OWNER="${BASH_REMATCH[1]}"
-      REPO="${BASH_REMATCH[2]}"
-      # Strip .git suffix if present
-      REPO="${REPO%.git}"
-    fi
-  fi
-  
-  if [ -z "$OWNER" ] || [ -z "$REPO" ]; then
-    echo -e "${RED}ERROR: Cannot determine repo. Use full URL or owner/repo#123 format.${NC}"
-    exit 1
-  fi
-  
-  GITHUB_URL="https://github.com/${OWNER}/${REPO}/pull/${PR_NUMBER}"
-  DEVIN_URL="https://devin.ai/${OWNER}/${REPO}/pull/${PR_NUMBER}"
-else
-  echo -e "${RED}ERROR: Invalid PR format: $PR_INPUT${NC}"
+resolve_pr_input "$PR_INPUT"
+if [[ -z "$GITHUB_URL" ]]; then
+  echo -e "${RED}ERROR: Invalid PR format or repo not found. Use full URL or owner/repo#123 format.${NC}"
   exit 1
 fi
 
