@@ -1777,7 +1777,7 @@ verify_build() {
     log_warn "   Consider adding these scripts to package.json"
   fi
 
-  # Step 3: Check for suspicious changes (anti-pattern detection)
+  # Step 4: Check for suspicious changes (anti-pattern detection)
   # Only run if we're in a git repo with commits
   if git rev-parse HEAD~1 &>/dev/null; then
     log_info "Checking for suspicious changes..."
