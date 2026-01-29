@@ -34,14 +34,24 @@ fi
 if command -v node &> /dev/null; then
   set +e
   result=$(node "$SCRIPT_DIR/check_blockers.js" "$TARGET" 2>/dev/null)
+  node_status=$?
   set -e
 
   if [[ -z "$result" ]]; then
-    result='{"canProceed":true,"message":"Check failed - proceeding"}'
+    if [[ "$node_status" == "1" ]]; then
+      result='{"canProceed":false,"message":"⚠️  BLOCKERS found - must fix before proceeding"}'
+    else
+      result='{"canProceed":true,"message":"Check failed - proceeding"}'
+    fi
   fi
 
   message=$(echo "$result" | jq -r '.message // "Unknown"' 2>/dev/null || echo "Check complete")
   canProceed=$(echo "$result" | jq -r '.canProceed // true' 2>/dev/null || echo "true")
+
+  if [[ "$node_status" == "1" && "$canProceed" != "false" ]]; then
+    message="⚠️  BLOCKERS found - must fix before proceeding"
+    canProceed="false"
+  fi
   
   echo "$message"
   
