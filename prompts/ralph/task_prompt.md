@@ -100,7 +100,15 @@ Commit: [hash]
 Learnings: [any gotchas discovered]
 ```
 
-If blocked, output exactly:
+If you cannot complete the task (unrecoverable error), output exactly:
+
+```xml
+<promise>TASK_FAILED</promise>
+```
+
+Then explain why the task cannot be completed.
+
+If blocked (need clarification, missing dependency), output exactly:
 
 ```xml
 <promise>TASK_BLOCKED</promise>
