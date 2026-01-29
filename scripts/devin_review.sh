@@ -145,9 +145,18 @@ if [[ "$USE_WEB" == "false" ]] && command -v npx &> /dev/null; then
   # Run devin-review CLI
   # It opens a localhost server and analyzes the PR
   set +e
-  npx devin-review "$GITHUB_URL" 2>&1 | tee "$OUTPUT_DIR/cli-output.log"
-  CLI_EXIT=$?
+  if command -v script &> /dev/null; then
+    script -q "$OUTPUT_DIR/cli-output.log" npx devin-review "$GITHUB_URL"
+    CLI_EXIT=$?
+  else
+    npx devin-review "$GITHUB_URL" 2>&1 | tee "$OUTPUT_DIR/cli-output.log"
+    CLI_EXIT=$?
+  fi
   set -e
+
+  if grep -qi "not a terminal" "$OUTPUT_DIR/cli-output.log" 2>/dev/null; then
+    CLI_EXIT=1
+  fi
   
   if [[ $CLI_EXIT -eq 0 ]]; then
     echo ""
