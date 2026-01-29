@@ -11,7 +11,7 @@ A complete skill/workflow for building applications using AI agents (Claude Code
 - **Oracle Review Loops**: Multi-lens AI review until convergence (0 blockers/majors)
 - **Beads Task Tracking**: Git-backed issue tracker designed for AI agents
 - **Ralph Autonomous Execution**: Fire-and-forget task completion with fresh contexts
-- **Auto-PR & Devin Review**: Every task → PR → AI code review
+- **Auto-PR**: Every task → PR
 
 ## Prerequisites
 
@@ -111,8 +111,8 @@ claude "/sprint"   # Create beads from plan
 │                      RALPH AUTONOMOUS LOOP                       │
 │                                                                  │
 │   ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐  │
-│   │ Get Next │ ─▶ │  Spawn   │ ─▶ │  Create  │ ─▶ │  Devin   │  │
-│   │   Task   │    │  Agent   │    │    PR    │    │  Review  │  │
+│   │ Get Next │ ─▶ │  Spawn   │ ─▶ │  Create  │ ─▶ │  Review  │  │
+│   │   Task   │    │  Agent   │    │    PR    │    │   Loop   │  │
 │   └──────────┘    └──────────┘    └──────────┘    └──────────┘  │
 │        ▲                                               │         │
 │        └───────────────────────────────────────────────┘         │
@@ -192,19 +192,7 @@ When Ralph completes a task:
 2. **Commits changes**: `feat(bd-xyz): Task subject`
 3. **Pushes to origin**: `git push -u origin task/bd-xyz`
 4. **Creates PR**: Via `gh pr create`
-5. **Triggers Devin Review**: AI code review on the PR
-
-### Devin Review
-
-After all tasks complete, Ralph triggers Devin AI review:
-
-```bash
-# Manual trigger
-npx devin-review
-
-# Or via web
-# https://devin.ai/felix-huber/appbuilder-skill/pull/123
-```
+5. **Optional review**: Use your preferred review process on the PR
 
 ## Directory Structure
 
@@ -371,7 +359,6 @@ export PR_BASE_BRANCH=develop
 | `--auto-pr` | true | Create PR for each completed task |
 | `--no-auto-pr` | - | Disable auto-PR |
 | `--pr-base <b>` | main | Base branch for PRs |
-| `--no-devin` | - | Disable Devin review |
 
 ## Troubleshooting
 
@@ -420,7 +407,7 @@ rm artifacts/06-oracle/plan/convergence-history.json
 1. **Start with a clear brief** - The better your 00-brief.md, the better everything downstream
 2. **Run Oracle reviews** - Don't skip the convergence loops, they catch real issues
 3. **Monitor progress** - Keep `tail -f progress.txt` running in another terminal
-4. **Review PRs** - Even with Devin review, human review catches things
+4. **Review PRs** - Human review catches things
 5. **Use DCG** - The safety tool prevents costly mistakes
 
 ## License
