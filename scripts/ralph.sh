@@ -2068,7 +2068,7 @@ DO NOT do any of the following to "pass" verification:
 
 If you find yourself wanting to do any of these, STOP and either:
 - Fix the root cause
-- Output TASK_BLOCKED with an explanation
+- Output <promise>TASK_BLOCKED</promise> with an explanation
 
 The orchestrator will detect these patterns and REJECT the task.
 
@@ -2118,6 +2118,10 @@ Output exactly: <promise>TASK_COMPLETE</promise>
 If you cannot complete the task:
 Output exactly: <promise>TASK_FAILED</promise>
 And explain why.
+
+If you are blocked (need clarification, missing dependency, etc.):
+Output exactly: <promise>TASK_BLOCKED</promise>
+And explain what you need to proceed.
 EOF
 }
 
