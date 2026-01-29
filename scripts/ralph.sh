@@ -2052,7 +2052,7 @@ fi)
 ## Critical Rules
 
 - Only modify files in allowed paths
-- Run ALL verification commands before committing
+- Run ALL verification commands before marking complete
 - If verification fails, fix the issue and retry
 - If you cannot complete the task, explain why clearly
 
@@ -2085,6 +2085,9 @@ npm run typecheck 2>&1 || tsc --noEmit 2>&1
 
 # 3. Build - catches compilation errors that dev mode misses
 npm run build 2>&1
+
+# 4. Tests - verifies functionality (CRITICAL for TDD)
+npm test 2>&1
 \`\`\`
 
 **If ANY command fails, DO NOT output TASK_COMPLETE.**
