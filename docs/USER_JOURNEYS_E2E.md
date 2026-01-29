@@ -76,6 +76,22 @@ agent-browser screenshot uj-001-complete.png
 - Admin/power user flows
 - Tested less frequently
 
+## Test Quality Guardrails (No Fake Tests)
+Fake/tautological tests are unacceptable. **BLOCKER** if tests:
+- Assert only hardcoded/config values
+- Never perform real actions (no click/command/request -> no state change)
+- Bypass the system under test via excessive mocking
+- Verify only selectors/IDs without checking UI state changes
+
+Every test must include at least one **behavioral** assertion:
+- UI/E2E: perform action + assert visible state change
+- API: make real request + assert response + persistence or side effect
+- CLI: run command + assert exit code/output + side effects
+- Library: call public API + assert state/output change
+
+If a feature isn't fully integrated yet, add a harness (below) so tests are real.
+Run a **test quality review** (fresh-eyes or cross-model) focused on detecting fake tests.
+
 ## Integration with Oracle Swarm
 
 ### In /ux Command
@@ -125,6 +141,17 @@ After implementation, run E2E tests for happy paths:
 # Run all happy path E2E tests
 ./scripts/run_e2e_happy_paths.sh
 ```
+
+## Test Harness Patterns (when full integration isn't ready)
+If core flows/components aren't integrated yet, add a harness so tests exercise
+real behavior:
+
+- **UI apps**: minimal route/screen that renders the real component with mock data
+- **CLI tools**: fixture commands that read/write temp dirs and verify side effects
+- **APIs/services**: minimal runner that starts the server and hits real endpoints
+- **Libraries**: a tiny example harness that calls public APIs end-to-end
+
+The harness must make it possible to run **real** tests (not config-only assertions).
 
 ## agent-browser Integration
 

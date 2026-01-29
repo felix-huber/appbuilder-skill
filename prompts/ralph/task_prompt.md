@@ -57,6 +57,13 @@ Determine if this is a testable task by checking tags:
 
 **If you skip TDD, explain why in your completion message.**
 
+### Test Quality Guardrails (MANDATORY when adding tests)
+- No fake/tautological tests (config-only assertions are forbidden)
+- Every test must exercise real behavior and assert state/output change
+- If full integration isn't ready, build a minimal **test harness**
+  (UI route, CLI fixture command, API runner) so tests are real
+- If uncertain about test validity, request a fresh-eyes review focused on tests
+
 ### Standard Workflow
 1. Read `progress.txt` for learnings from previous tasks
 2. Examine all relevant files & dependencies first

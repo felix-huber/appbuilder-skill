@@ -329,6 +329,11 @@ When agents write tests first:
 - Failures are caught immediately
 - The agent must understand the requirement to write the test
 
+**Fake tests are unacceptable**:
+- Tests that only assert constants/config values
+- Tests that never trigger real behavior or state change
+Treat these as **BLOCKER** issues in reviews.
+
 ### Test Pyramid for Agent Tasks
 
 ```

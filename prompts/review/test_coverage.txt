@@ -2,6 +2,29 @@ Do we have full unit test coverage without using mocks/fake stuff?
 What about complete e2e integration test scripts with great, detailed
 logging?
 
+## Test Quality Guardrails (BLOCKER if violated)
+Fake tests are not acceptable. Flag as **BLOCKER** if tests:
+- Assert only hardcoded/config values (tautologies)
+- Never exercise real behavior (no user/action -> no state/output change)
+- Use mocks/stubs that bypass the real unit under test
+- "Verify" test IDs or selectors without asserting UI state changes
+
+Examples of **fake** tests:
+- UI/E2E: page.evaluate returns a config object; assertions only check strings
+- API: test asserts a mocked response without hitting real handler
+- CLI: test checks a constant string without running the command
+- Library: test asserts defaults without calling public API
+
+Require at least one **behavioral** assertion per test:
+- UI/E2E: perform action + assert visible state change
+- API: make real request + assert response + persistence or side effect
+- CLI: run command + assert exit code/output + side effects
+- Library: call public API + assert state/output change
+
+If the plan includes E2E/integration tests, require a **Test Quality Review**
+step (cross-model or separate reviewer) focused on detecting fake tests.
+If missing, flag as MAJOR.
+
 ## TDD Verification
 First, check if tests were written FIRST (per TDD):
 - Are there test files alongside implementation files?

@@ -26,6 +26,9 @@ You are a senior code reviewer. You have 30-90 minutes of extended thinking time
 - Clear function/module boundaries
 - Appropriate abstraction level
 - No duplicated logic
+- Avoid dumping-ground folders (e.g., "lib/utils" with unrelated helpers)
+- Prefer one of: feature-first, layer-based, or domain-based structure
+- Split oversized files/components into cohesive modules
 
 ## Severity Definitions
 

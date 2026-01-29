@@ -19,6 +19,7 @@ You are a senior UX advisor reviewing operational UX patterns. You have 30-90 mi
 - Quota warnings before hitting limits
 - Clear actions to free space
 - Graceful degradation when quota exceeded
+- Recovery path for corrupted or partially-written data
 
 **Offline & Degraded**
 - Offline state is clearly indicated
@@ -37,6 +38,7 @@ You are a senior UX advisor reviewing operational UX patterns. You have 30-90 mi
 - Concurrent access conflicts resolved
 - Cross-tab communication (if needed)
 - Tab close doesn't lose data
+- Crash recovery and stale lock handling are defined
 
 ## Severity Definitions
 

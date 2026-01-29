@@ -5,9 +5,21 @@ Check that the plan includes:
 - **Unit test specs** for each feature task (tests to write FIRST)
 - **Integration test beads** as separate tasks (depend on features)
 - **E2E test beads** as separate tasks (depend on features)
+- **Test quality audit** step/bead (detect fake/tautological tests)
+
+If the system includes persisted data (DB/files/IDB/etc), require explicit
+tests for failure scenarios (quota/disk full, corruption, mid-session loss).
+
+If the system involves concurrent access (multi-tab, multi-process, multi-host),
+require tests for stale locks and crash-recovery behavior.
+
+If UI or flows are not fully integrated yet, require a test harness
+(minimal UI route, CLI fixture command, or API runner) so tests exercise
+real behavior rather than config-only assertions.
 
 If a feature task is missing unit test specs, flag as MAJOR.
 If there are no E2E beads for user stories, flag as MAJOR.
+If there is no test quality audit, flag as MAJOR.
 
 ## Severity Definitions (BE STRICT)
 - **BLOCKER**: Cannot proceed to implementation (rare - reserve for genuine blockers)

@@ -25,6 +25,11 @@ flowchart TB
 |--------|---------------|--------------|
 | … | … | … |
 
+### Code Organization Plan
+- Choose a primary structure: feature-first, layer-based, or domain-based
+- Define a clear home for shared utilities (e.g., common/, shared/, core/)
+- Split oversized files/components into cohesive modules (set a threshold)
+
 ### Data Model
 ```typescript
 interface Entity {
@@ -69,9 +74,27 @@ describe('[ModuleName]', () => {
 |------------|----------|----------|----------|
 | … | … | … | P1 |
 
-### Async Communication Testing (if using Workers/IPC)
+### Test Harness (when full integration isn't ready)
+If core flows/components aren't integrated yet, add a harness so tests
+exercise **real behavior** (not config-only assertions):
+- **UI**: minimal route/screen rendering real components with mock data
+- **CLI**: fixture command(s) that run against temp input/output
+- **API/Service**: minimal runner that starts server and hits real endpoints
 
-If your architecture uses Web Workers, Service Workers, or similar async message passing:
+### Test Quality Guardrails (No Fake Tests)
+**BLOCKER if violated**:
+- Tests that only assert hardcoded/config values (tautologies)
+- Tests without real actions (no user/command/request -> no state change)
+- Tests that bypass the unit under test via excessive mocking
+- UI tests that only check selectors/IDs without state assertions
+
+Every test must include at least one **behavioral** assertion.
+Include a **test quality review** step (fresh-eyes or cross-model) focused
+specifically on detecting fake/tautological tests.
+
+### Async Communication Testing (if using Workers/IPC/RPC/Subprocesses)
+
+If your architecture uses async request/response (workers, subprocesses, RPC, etc):
 
 **Required Test Coverage:**
 | Test Type | What to Verify | Location |
@@ -85,9 +108,21 @@ If your architecture uses Web Workers, Service Workers, or similar async message
 - [ ] All request-response messages use correlation IDs
 - [ ] Broadcasts are distinguished from responses
 - [ ] Worker initialization includes ready handshake
+- [ ] Requests time out if no response is received
 - [ ] Tests verify broadcasts don't interfere with responses
 
 See: `docs/WORKER_CLIENT_PATTERNS.md`
+
+### Persistence Failure Scenarios (if data is stored)
+Include tests for:
+- Quota/disk full / permission denied
+- Data cleared mid-session
+- Corrupted snapshot or partial writes
+
+### Concurrency & Locking Scenarios (if multi-instance)
+If multiple instances can run (tabs, processes, hosts), add tests for:
+- Stale locks after crash
+- Recovery path and state reconciliation
 
 ### Test Quality Requirements (Agent Evals)
 
@@ -127,6 +162,11 @@ See: `docs/AGENT_EVALUATION.md`
 
 ### Decision 2: [Topic]
 …
+
+## Performance & Load Strategy
+- Identify heavy dependencies and load them lazily (UI/web apps)
+- Keep startup path fast (CLI/services); lazy-init optional modules
+- Optional: define a performance budget (startup time or bundle size)
 
 ## Risks & Mitigations
 

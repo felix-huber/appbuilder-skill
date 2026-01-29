@@ -1,5 +1,9 @@
 # Worker-Client Communication Patterns
 
+These patterns apply to any async request/response system: Web Workers,
+Service Workers, subprocesses, RPC, or background jobs. The core risks are
+the same: misrouted responses, missing timeouts, and lost messages.
+
 Lessons learned from building apps with Web Workers, Service Workers, and similar async message-passing architectures.
 
 ## The Problem
