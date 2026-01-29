@@ -285,19 +285,6 @@ The script will:
 
 ---
 
-## Devin Review (Before Merge)
-
-Before merging any PR, run Devin code review:
-
-```bash
-./scripts/devin_review.sh        # Uses CLI (npx devin-review)
-./scripts/devin_review.sh --web 123  # Force web interface
-```
-
-Fix any **SEVERE** bugs before merging.
-
----
-
 ## Artifact Chain
 
 ```
@@ -396,7 +383,6 @@ node scripts/compile_task_graph.js
 | `review-loops` | Iteration methodology |
 | `parallel-execution` | Dependency rules, self-healing, status tracking |
 | `frontend-design` | ASCII wireframes, oklch colors, animations |
-| `devin-review` | Free AI code review integration |
 | `agent-browser` | Browser automation patterns |
 
 ---

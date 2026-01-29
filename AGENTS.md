@@ -373,9 +373,4 @@ When ending a work session, complete ALL steps. Work is NOT complete until git p
 ubs --diff .  # Before every commit. Exit 0 = safe.
 ```
 
-### Devin Review
-```bash
-./scripts/devin_review.sh  # Before every merge. Fix SEVERE bugs.
-```
-
 See `CLAUDE.md` for full documentation.

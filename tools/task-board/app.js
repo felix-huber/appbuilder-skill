@@ -10,7 +10,7 @@ function el(tag, attrs = {}, ...kids) {
     else e.setAttribute(k, v);
   }
   for (const kid of kids) {
-    if (kid == null) continue;
+    if (kid === null || kid === undefined) continue;
     e.appendChild(typeof kid === "string" ? document.createTextNode(kid) : kid);
   }
   return e;

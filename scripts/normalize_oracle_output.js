@@ -138,7 +138,7 @@ function extractFirstJsonObject(txt) {
 
   for (const start of uniq) {
     const parsed = tryParseJsonAt(txt, start);
-    if (parsed != null) return parsed;
+    if (parsed !== null && parsed !== undefined) return parsed;
   }
   return null;
 }

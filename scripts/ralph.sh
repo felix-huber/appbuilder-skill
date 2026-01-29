@@ -54,7 +54,6 @@ FRONTEND_TOOL="claude" # Frontend/UI/design tasks → Claude Code (nuanced)
 USE_BEADS=""  # Empty = auto-detect/interactive, "true" = beads, "false" = task-graph
 FRESH_EYES="false"     # Set to "true" for post-task review
 REVIEW_TOOL=""         # Empty = same as coding tool, "codex" or "claude" = cross-model review
-DEVIN_REVIEW="true"    # Run Devin AI code review on completion (free for public PRs)
 
 # Self-healing (from task-orchestrator pattern)
 SELF_HEAL="true"       # Auto-recover stuck tasks
@@ -159,10 +158,6 @@ parse_args() {
         PR_BASE_BRANCH="$2"
         shift 2
         ;;
-      --no-devin)
-        DEVIN_REVIEW="false"
-        shift
-        ;;
       -h|--help)
         show_help
         exit 0
@@ -221,7 +216,6 @@ Options:
   --auto-pr                    Create PR after each completed task (default: on)
   --no-auto-pr                 Disable auto-PR creation
   --pr-base <branch>           Base branch for PRs (default: main)
-  --no-devin                   Disable Devin AI code review
   -h, --help                   Show this help
 
 Tool Routing (Doodlestein Methodology):
@@ -284,7 +278,6 @@ Environment Variables:
   STALL_THRESHOLD  Minutes before task is stuck (default: 20)
   AUTO_PR          "false" to disable auto-PR
   PR_BASE_BRANCH   Base branch for PRs (default: main)
-  DEVIN_REVIEW     "false" to disable Devin review
 
 Examples:
   ./scripts/ralph.sh 50                    # 50 iterations, smart routing (default)
@@ -1341,49 +1334,6 @@ main() {
         log_success "║          🎉 ALL TASKS COMPLETED! 🎉                ║"
         log_success "╚════════════════════════════════════════════════════╝"
         print_status
-        
-        # Run Devin Review if enabled
-        if [[ "${DEVIN_REVIEW:-true}" == "true" ]]; then
-          echo ""
-          log_info "Running Devin AI code review..."
-          echo ""
-          
-          # Prefer CLI (npx devin-review) over web
-          if command -v npx &> /dev/null; then
-            log_info "Using Devin CLI (npx devin-review)..."
-            set +e
-            npx devin-review 2>&1 | head -50
-            set -e
-            echo ""
-            log_success "Devin CLI review started. Check browser for results."
-          else
-            # Fallback to web
-            local pr_number=""
-            if command -v gh &> /dev/null; then
-              pr_number=$(gh pr view --json number -q .number 2>/dev/null || echo "")
-            fi
-            
-            if [[ -n "$pr_number" ]]; then
-              local repo_info=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "")
-              if [[ -n "$repo_info" ]]; then
-                local devin_url="https://devin.ai/${repo_info}/pull/${pr_number}"
-                log_info "Opening Devin Review: $devin_url"
-                
-                if command -v open &> /dev/null; then
-                  open "$devin_url"
-                elif command -v xdg-open &> /dev/null; then
-                  xdg-open "$devin_url"
-                fi
-              fi
-            fi
-          fi
-          
-          echo ""
-          echo "═══════════════════════════════════════════════════════════════"
-          echo "  Fix any SEVERE bugs before merging."
-          echo "  Run: ./scripts/devin_review.sh for detailed review."
-          echo "═══════════════════════════════════════════════════════════════"
-        fi
         
         echo "<promise>COMPLETE</promise>"
         exit 0
