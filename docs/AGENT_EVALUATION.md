@@ -220,6 +220,7 @@ For complex validation, use specialized subagents:
 # After task completion, run council review
 run_council_review() {
   local task_id="$1"
+  local task_tags="$2"
 
   # Analyst: Check correctness
   analyst_result=$(run_subagent "analyst" "Review task $task_id output for correctness")
@@ -227,9 +228,14 @@ run_council_review() {
   # Sentinel: Check for anti-patterns
   sentinel_result=$(run_subagent "sentinel" "Scan for anti-patterns in task $task_id changes")
 
-  if [[ "$analyst_result" == "issues" ]] || [[ "$sentinel_result" == "violations" ]]; then
+  # Designer: Check UI/UX quality (only for UI tasks)
+  if echo "$task_tags" | grep -qiE "ui|component|frontend"; then
+    designer_result=$(run_subagent "designer" "Review UI/UX quality for task $task_id")
+  fi
+
+  if [[ "$analyst_result" == "issues" ]] || [[ "$sentinel_result" == "violations" ]] || [[ "$designer_result" == "issues" ]]; then
     # Healer: Fix issues
-    healer_result=$(run_subagent "healer" "Fix issues: $analyst_result $sentinel_result")
+    healer_result=$(run_subagent "healer" "Fix issues: $analyst_result $sentinel_result $designer_result")
   fi
 }
 ```
