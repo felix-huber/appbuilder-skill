@@ -146,8 +146,13 @@ if [[ "$USE_WEB" == "false" ]] && command -v npx &> /dev/null; then
   # It opens a localhost server and analyzes the PR
   set +e
   if command -v script &> /dev/null; then
-    script -q "$OUTPUT_DIR/cli-output.log" npx devin-review "$GITHUB_URL"
-    CLI_EXIT=$?
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+      script -q "$OUTPUT_DIR/cli-output.log" npx devin-review "$GITHUB_URL"
+      CLI_EXIT=$?
+    else
+      script -q -c "npx devin-review \"$GITHUB_URL\"" "$OUTPUT_DIR/cli-output.log"
+      CLI_EXIT=$?
+    fi
   else
     npx devin-review "$GITHUB_URL" 2>&1 | tee "$OUTPUT_DIR/cli-output.log"
     CLI_EXIT=$?
