@@ -180,14 +180,14 @@ When starting a beads-tracked task:
    br close <id> --reason "Completed"
    ```
 
-5. **Commit .beads/ in the same commit as code changes**
+5. **If using beads, keep state updated (this repo ignores `.beads/`)**
 
 **Mapping cheat-sheet:**
 - Thread ID / commit messages: `br-###` for traceability
 - File reservation reason: `br-###`
 
-**Key invariants:**
-- `.beads/` is authoritative state and must always be committed with code changes
+**Key invariants (when using beads):**
+- `.beads/` is authoritative state in beads-tracked projects
 - Do not edit `.beads/*.jsonl` directly; only via `br`
 
 ---
@@ -215,7 +215,7 @@ When ending a work session, you MUST complete ALL steps below. Work is NOT compl
    ```bash
    git pull --rebase
    br sync --flush-only  # Export to JSONL (does NOT run git commands)
-   git add .beads/ && git commit -m "Update beads"
+   git add -A && git commit -m "Update work"
    git push
    git status  # MUST show "up to date with origin"
    ```

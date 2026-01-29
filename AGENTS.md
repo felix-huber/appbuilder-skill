@@ -351,7 +351,7 @@ When ending a work session, complete ALL steps. Work is NOT complete until git p
    ```bash
    git pull --rebase
    br sync --flush-only
-   git add .beads/ && git commit -m "Update beads"
+   git add -A && git commit -m "Update work"
    git push
    ```
 5. **Verify** `git status` shows "up to date with origin"

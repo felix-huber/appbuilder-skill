@@ -1,6 +1,5 @@
-# Beads - track JSONL exports, ignore DB and logs
-.beads/beads.db
-.beads/logs/
+# Beads (local state; not tracked here)
+.beads/
 
 # Ralph local tracking
 .ralph-task-tracking.json
