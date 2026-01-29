@@ -1578,6 +1578,7 @@ verify_build() {
   local build_passed=true
   local typecheck_passed=true
   local lint_passed=true
+  local tests_passed=true
   local build_output=""
   local typecheck_output=""
   local lint_output=""
@@ -1715,7 +1716,6 @@ verify_build() {
   fi
 
   # Step 3: Run Tests (CRITICAL for TDD verification)
-  local tests_passed=true
   if [[ "${VERIFY_TESTS:-true}" == "true" ]]; then
     log_info "Running tests..."
 
