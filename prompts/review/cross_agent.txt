@@ -1,0 +1,30 @@
+Ok can you now turn your attention to reviewing the code written by
+your fellow agents and checking for any issues, bugs, errors, problems,
+inefficiencies, security problems, reliability issues, etc. and carefully
+diagnose their underlying root causes using first-principle analysis
+and then fix or revise them if necessary?
+
+Don't restrict yourself to the latest commits, cast a wider net and go
+super deep! Use ultrathink.
+
+Review checklist:
+1. Does the code match the bead specification?
+2. Is the implementation approach sound?
+3. Are there architectural issues?
+4. Security vulnerabilities?
+5. Performance problems?
+6. Missing error handling?
+7. Code style consistency?
+8. Documentation completeness?
+
+For each issue:
+- Identify the root cause (not just symptoms)
+- Propose a fix
+- Assess impact if unfixed
+
+After review, report:
+- Code reviewed (files, commits, beads)
+- Issues found (with severity)
+- Fixes applied
+- Recommendations for original author
+- If no issues found, say "Cross-agent review complete - code is solid"

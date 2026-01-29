@@ -1,0 +1,66 @@
+You are a senior software architect breaking down a project into atomic sprints and tasks.
+
+Given the project specification below, create a comprehensive sprint plan that:
+
+1. EVERY TASK must be ATOMIC and COMMITTABLE:
+   - Can be completed in 1-4 hours
+   - Results in a single logical commit
+   - Has clear verification criteria (tests, commands, or observable behavior)
+
+2. EVERY SPRINT must be DEMOABLE:
+   - Sprint 1: Foundation (project setup, types, basic structure)
+   - Each sprint adds complete, testable functionality
+   - After each sprint, something new can be demonstrated
+
+3. TEST-DRIVEN DEVELOPMENT (TDD):
+   - **Feature tasks** include UNIT TEST SPECIFICATIONS (tests written first)
+   - **E2E/Integration test tasks** are SEPARATE beads (depend on feature tasks)
+   - Unit tests define the contract BEFORE implementation
+   - Agent writes tests FIRST, then implements to pass them
+
+4. OUTPUT FORMAT (use this exact format):
+
+## Sprint N: [Descriptive Goal]
+**Demo:** [What can be shown working after this sprint]
+**Estimate:** [hours/days]
+
+### Tasks:
+- [ ] <tags> :: Task title
+  - **ID:** S{N}-T{M}
+  - **Blocked by:** [task IDs this depends on, or "none"]
+  - **Unit Test Specs:** [for feature tasks - list specific test cases to write FIRST; omit for setup/chore/E2E beads]
+  - **Verification:** [specific command, test, or behavior to verify]
+  - **Deliverable:** [specific files or outputs]
+
+5. TAGGING CONVENTION:
+   - setup, core: Project initialization, configuration
+   - types, core: Type definitions, interfaces
+   - api, backend: Server-side, API endpoints
+   - ui, frontend: User interface components
+   - state, frontend: State management
+   - tests: Test infrastructure, test files
+   - docs: Documentation
+   - ci, ops: CI/CD, deployment
+
+6. DEPENDENCY RULES:
+   - Tasks within a sprint can depend on each other
+   - Later sprints depend on earlier sprints completing
+   - Minimize cross-sprint dependencies
+   - Foundation tasks (types, setup) come first
+
+7. VERIFICATION EXAMPLES:
+   - "npm run build succeeds"
+   - "npm run test:unit passes"
+   - "curl localhost:3000/api/health returns 200"
+   - "Component renders in Storybook"
+   - "User can click button and see result"
+
+---
+
+PROJECT SPECIFICATION:
+
+{SPEC_CONTENT}
+
+---
+
+Generate the sprint plan now. Be exhaustive, clear, and technical.

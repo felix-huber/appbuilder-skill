@@ -1,0 +1,36 @@
+Great, now I want you to carefully read over all of the new code you
+just wrote and other existing code you just modified with "fresh eyes"
+looking super carefully for any obvious bugs, errors, problems, issues,
+confusion, etc.
+
+Carefully fix anything you uncover. Use ultrathink.
+
+**FIRST AND MOST IMPORTANT CHECK:**
+Would a senior engineer say this is overcomplicated? If yes, simplify.
+- Are there unnecessary abstractions?
+- Could this be done with fewer lines?
+- Is there accidental complexity that could be removed?
+- Are there simpler standard library methods that could replace custom code?
+
+Specific checks:
+1. Does the code do what the bead/task description says?
+2. Are there any logical errors?
+3. Is error handling complete?
+4. Are edge cases covered?
+5. Is the code readable and maintainable?
+6. Are there any security issues?
+7. Is performance acceptable?
+8. **UNIT TESTS**: Do tests exist and cover the new code?
+   - Happy path (normal operation)
+   - Edge cases (boundaries, empty inputs)
+   - Error paths (invalid inputs, exceptions)
+   - If NO tests exist for new feature code, CREATE THEM NOW
+   - (Setup/chore tasks may not need unit tests)
+
+After review, report:
+- Issues found and fixed
+- Simplifications made (if any)
+- Any remaining concerns
+- If no issues found, say "Fresh eyes review complete - code looks good"
+
+Keep running this review until no more issues are found!

@@ -1,0 +1,37 @@
+Do we have full unit test coverage without using mocks/fake stuff?
+What about complete e2e integration test scripts with great, detailed
+logging?
+
+## TDD Verification
+First, check if tests were written FIRST (per TDD):
+- Are there test files alongside implementation files?
+- Do the tests match the specs from the bead description?
+- Are unit test specs from beads actually implemented?
+
+## Coverage Check
+1. Unit tests for all functions/methods (TDD - written first)
+2. Integration tests for API endpoints (separate beads)
+3. E2E tests for user flows (separate beads)
+4. Edge case coverage
+5. Error path coverage
+6. Test quality (not just coverage %)
+
+For each gap found:
+- Describe what's missing
+- Explain why it's important
+- Prioritize by risk
+
+If coverage is incomplete, create a comprehensive and granular set of
+beads (or tasks) for all missing tests with:
+- Tasks and subtasks
+- Dependency structure
+- Detailed comments on what to test and how
+
+Use ultrathink.
+
+After analysis, report:
+- Current coverage assessment
+- TDD compliance (were tests written first?)
+- Gaps identified (categorized)
+- New test beads/tasks created (if any)
+- If coverage is complete, say "Test coverage verified - comprehensive"

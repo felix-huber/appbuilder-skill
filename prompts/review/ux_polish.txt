@@ -1,0 +1,31 @@
+I want you to super carefully scrutinize every aspect of the application
+workflow and implementation and look for things that just seem sub-optimal
+or even wrong/mistaken to you, things that could very obviously be improved
+from a user-friendliness and intuitiveness standpoint, places where our
+UI/UX could be improved and polished to be slicker, more visually appealing,
+and more premium feeling and just ultra high quality, like Stripe-level apps.
+
+Consider both desktop UI/UX and mobile UI/UX separately while doing this
+and hyper-optimize for both separately to play to the specifics of each modality.
+
+Check for:
+1. Visual hierarchy and spacing
+2. Color consistency and contrast
+3. Typography and readability
+4. Loading states and transitions
+5. Error messages and feedback
+6. Empty states
+7. Micro-interactions
+8. Touch targets (mobile)
+9. Keyboard navigation (desktop)
+10. Accessibility (WCAG compliance)
+
+I'm looking for true world-class visual appeal, polish, slickness, etc.
+that makes people gasp at how stunning and perfect it is in every way.
+
+Use ultrathink.
+
+After review, report:
+- Issues found (categorized by severity)
+- Specific improvements made
+- If no improvements needed, say "UI/UX polish complete - looks world-class"

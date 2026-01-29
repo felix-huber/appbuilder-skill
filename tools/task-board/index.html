@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Task Board</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header>
+    <h1>Task Board</h1>
+    <p>Renders <code>artifacts/04-task-graph.json</code> as a lightweight Kanban.</p>
+    <p class="hint">
+      Serve the repo root so <code>/artifacts</code> is reachable:
+      <code>python -m http.server 8080 --directory .</code>
+      then open <code>/tools/task-board</code>.
+    </p>
+
+    <div class="row">
+      <button id="reload">Reload</button>
+      <button id="export">Download markdown report</button>
+    </div>
+
+    <div class="filters">
+      <label>
+        Search
+        <input id="q" type="search" placeholder="subject / tag / feature" />
+      </label>
+      <label>
+        Tag
+        <select id="tag"><option value="">(all)</option></select>
+      </label>
+      <label>
+        Status
+        <select id="status">
+          <option value="">(all)</option>
+          <option value="pending">Pending</option>
+          <option value="in_progress">In Progress</option>
+          <option value="completed">Completed</option>
+          <option value="blocked">Blocked</option>
+        </select>
+      </label>
+      <label>
+        Source
+        <select id="source">
+          <option value="">(all)</option>
+          <option value="plan">Plan Seeds</option>
+          <option value="oracle">Oracle Issues</option>
+        </select>
+      </label>
+    </div>
+
+    <div id="summary" class="summary"></div>
+  </header>
+
+  <main>
+    <section class="board" id="board"></section>
+  </main>
+
+  <footer>
+    <small>
+      Tip: to update task status, edit <code>artifacts/04-task-graph.json</code> directly or use Claude Code tasks.
+    </small>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

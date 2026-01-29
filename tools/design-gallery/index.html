@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Design Gallery — Variant Comparison</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    
+    :root {
+      --bg: #0a0a0a;
+      --surface: #141414;
+      --border: #2a2a2a;
+      --text: #e5e5e5;
+      --text-muted: #888;
+      --accent: #f97316;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      min-height: 100vh;
+    }
+    
+    .header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 1rem 2rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    
+    .header h1 {
+      font-size: 1.25rem;
+      font-weight: 600;
+      margin: 0;
+    }
+    
+    .header-controls {
+      display: flex;
+      gap: 1rem;
+      align-items: center;
+    }
+    
+    .view-toggle {
+      display: flex;
+      background: var(--bg);
+      border-radius: 8px;
+      padding: 4px;
+    }
+    
+    .view-toggle button {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      padding: 0.5rem 1rem;
+      font-size: 0.8125rem;
+      cursor: pointer;
+      border-radius: 6px;
+      transition: all 0.15s;
+    }
+    
+    .view-toggle button.active {
+      background: var(--accent);
+      color: white;
+    }
+    
+    .scale-control {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.8125rem;
+      color: var(--text-muted);
+    }
+    
+    .scale-control input {
+      width: 100px;
+    }
+    
+    .container {
+      padding: 2rem;
+    }
+    
+    .no-manifest {
+      text-align: center;
+      padding: 4rem;
+      color: var(--text-muted);
+    }
+    
+    .no-manifest code {
+      background: var(--surface);
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.875rem;
+    }
+    
+    /* Grid view */
+    .grid-view {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+      gap: 1.5rem;
+    }
+    
+    .variant-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      transition: border-color 0.15s;
+    }
+    
+    .variant-card:hover {
+      border-color: var(--accent);
+    }
+    
+    .variant-card.keystone {
+      border-color: var(--accent);
+      grid-column: span 2;
+    }
+    
+    .variant-header {
+      padding: 1rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    
+    .variant-header h3 {
+      margin: 0;
+      font-size: 0.9375rem;
+      font-weight: 600;
+    }
+    
+    .variant-header .badge {
+      background: var(--accent);
+      color: white;
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.6875rem;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    
+    .variant-preview {
+      height: 300px;
+      overflow: hidden;
+      position: relative;
+    }
+    
+    .variant-card.keystone .variant-preview {
+      height: 400px;
+    }
+    
+    .variant-preview iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+      transform-origin: top left;
+    }
+    
+    .variant-actions {
+      padding: 0.75rem 1rem;
+      background: var(--bg);
+      display: flex;
+      gap: 0.5rem;
+    }
+    
+    .variant-actions a {
+      flex: 1;
+      text-align: center;
+      padding: 0.5rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      text-decoration: none;
+      font-size: 0.8125rem;
+      transition: all 0.15s;
+    }
+    
+    .variant-actions a:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    
+    /* Side-by-side view */
+    .side-by-side {
+      display: flex;
+      gap: 1rem;
+      overflow-x: auto;
+      padding-bottom: 1rem;
+    }
+    
+    .side-by-side .variant-card {
+      flex: 0 0 600px;
+    }
+    
+    .side-by-side .variant-preview {
+      height: 500px;
+    }
+    
+    /* Focus view */
+    .focus-view {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    
+    .focus-view .variant-card {
+      margin-bottom: 2rem;
+    }
+    
+    .focus-view .variant-preview {
+      height: 600px;
+    }
+    
+    .description {
+      padding: 0.75rem 1rem;
+      font-size: 0.8125rem;
+      color: var(--text-muted);
+      border-top: 1px solid var(--border);
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>🖼️ Design Gallery</h1>
+    <div class="header-controls">
+      <div class="view-toggle">
+        <button class="active" data-view="grid">Grid</button>
+        <button data-view="side">Side-by-Side</button>
+        <button data-view="focus">Focus</button>
+      </div>
+      <div class="scale-control">
+        <label>Scale:</label>
+        <input type="range" id="scale" min="25" max="100" value="50">
+        <span id="scale-value">50%</span>
+      </div>
+    </div>
+  </div>
+  
+  <div class="container">
+    <div id="gallery" class="grid-view"></div>
+  </div>
+
+  <script>
+    let manifest = null;
+    let scale = 0.5;
+    let viewMode = 'grid';
+
+    async function loadManifest() {
+      try {
+        const res = await fetch('../../artifacts/05-design/manifest.json');
+        if (!res.ok) throw new Error('Manifest not found');
+        manifest = await res.json();
+        render();
+      } catch (e) {
+        document.getElementById('gallery').innerHTML = `
+          <div class="no-manifest">
+            <h2>No manifest found</h2>
+            <p>Run this command to build the manifest:</p>
+            <p><code>node scripts/design_manifest_build.js</code></p>
+            <p style="margin-top: 2rem;">Expected location:</p>
+            <p><code>artifacts/05-design/manifest.json</code></p>
+          </div>
+        `;
+      }
+    }
+
+    function createVariantCard(variant, isKeystone = false) {
+      const card = document.createElement('div');
+      card.className = `variant-card${isKeystone ? ' keystone' : ''}`;
+      
+      const filePath = `../../artifacts/05-design/${variant.file}`;
+      
+      card.innerHTML = `
+        <div class="variant-header">
+          <h3>${variant.title || variant.file}</h3>
+          ${isKeystone ? '<span class="badge">Keystone</span>' : ''}
+        </div>
+        <div class="variant-preview">
+          <iframe src="${filePath}" style="transform: scale(${scale}); width: ${100/scale}%; height: ${100/scale}%;"></iframe>
+        </div>
+        ${variant.description ? `<div class="description">${variant.description}</div>` : ''}
+        <div class="variant-actions">
+          <a href="${filePath}" target="_blank">Open Full</a>
+          <a href="${filePath}" download>Download</a>
+        </div>
+      `;
+      
+      return card;
+    }
+
+    function render() {
+      const gallery = document.getElementById('gallery');
+      gallery.innerHTML = '';
+      gallery.className = viewMode === 'grid' ? 'grid-view' : viewMode === 'side' ? 'side-by-side' : 'focus-view';
+      
+      if (!manifest) return;
+      
+      // Add keystone first
+      if (manifest.keystone) {
+        gallery.appendChild(createVariantCard(manifest.keystone, true));
+      }
+      
+      // Add variants
+      for (const variant of manifest.variants || []) {
+        gallery.appendChild(createVariantCard(variant, false));
+      }
+    }
+
+    function updateScale(newScale) {
+      scale = newScale / 100;
+      document.getElementById('scale-value').textContent = `${newScale}%`;
+      
+      document.querySelectorAll('.variant-preview iframe').forEach(iframe => {
+        iframe.style.transform = `scale(${scale})`;
+        iframe.style.width = `${100/scale}%`;
+        iframe.style.height = `${100/scale}%`;
+      });
+    }
+
+    // View toggle
+    document.querySelectorAll('.view-toggle button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.view-toggle button').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        viewMode = btn.dataset.view;
+        render();
+      });
+    });
+
+    // Scale slider
+    document.getElementById('scale').addEventListener('input', (e) => {
+      updateScale(parseInt(e.target.value));
+    });
+
+    // Load on start
+    loadManifest();
+  </script>
+</body>
+</html>

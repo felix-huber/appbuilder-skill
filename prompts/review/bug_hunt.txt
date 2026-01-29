@@ -1,0 +1,30 @@
+I want you to sort of randomly explore the code files in this project,
+choosing code files to deeply investigate and understand and trace their
+functionality and execution flows through the related code files which
+they import or which they are imported by.
+
+Once you understand the purpose of the code in the larger context of
+the workflows, I want you to do a super careful, methodical, and critical
+check with "fresh eyes" to find any obvious bugs, problems, errors, issues,
+silly mistakes, etc. and then systematically and meticulously and
+intelligently correct them.
+
+Be sure to comply with ALL rules in AGENTS.md (or CLAUDE.md) and ensure
+that any code you write or revise conforms to the best practice guides
+referenced there. Use ultrathink.
+
+Focus areas:
+1. Off-by-one errors
+2. Null/undefined handling
+3. Race conditions
+4. Resource leaks
+5. Error handling gaps
+6. Edge cases
+7. Type mismatches
+8. Logic errors
+
+After exploration, report:
+- Files explored
+- Bugs found (with file:line references)
+- Fixes applied
+- If no bugs found, say "Bug hunt complete - no issues found"

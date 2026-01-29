@@ -1,0 +1,41 @@
+{
+  "name": "appbuilder-skill",
+  "version": "2.9.19",
+  "description": "AI-driven app development skill with TDD, Oracle review loops, beads task tracking, and Ralph autonomous execution",
+  "author": "Felix Huber",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/felix-huber/appbuilder-skill"
+  },
+  "scripts": {
+    "oracle:prd": "./scripts/oracle_lens_pack.sh prd artifacts/01-prd.md artifacts/00-brief.md",
+    "oracle:ux": "./scripts/oracle_lens_pack.sh ux artifacts/02-ux.md artifacts/01-prd.md",
+    "oracle:plan": "./scripts/oracle_lens_pack.sh plan artifacts/03-plan.md artifacts/01-prd.md artifacts/02-ux.md",
+    "tasks": "node scripts/compile_task_graph.js --plan artifacts/03-plan.md --issues artifacts/06-oracle/plan/issues.json --out artifacts/04-task-graph.json",
+    "beads": "node scripts/generate_beads_setup.js && echo 'Run: bash artifacts/04-beads-setup.sh'",
+    "ralph": "./scripts/ralph.sh",
+    "ralph:beads": "./scripts/ralph.sh --beads",
+    "gates": "./scripts/gate_pack.sh",
+    "status": "node scripts/swarm_status.js",
+    "design:manifest": "node scripts/design_manifest_build.js",
+    "tasteboard": "echo 'Open http://localhost:8080/tools/tasteboard/' && python3 -m http.server 8080",
+    "gallery": "echo 'Open http://localhost:8080/tools/design-gallery/' && python3 -m http.server 8080",
+    "board": "echo 'Open http://localhost:8080/tools/task-board/' && python3 -m http.server 8080"
+  },
+  "keywords": [
+    "oracle",
+    "gpt-5",
+    "compound-engineering",
+    "claude-code",
+    "artifact-driven",
+    "review-loops",
+    "ralph",
+    "autonomous",
+    "beads",
+    "beads-rust"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
