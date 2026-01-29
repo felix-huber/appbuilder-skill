@@ -410,13 +410,117 @@ rm artifacts/06-oracle/plan/convergence-history.json
 4. **Review PRs** - Human review catches things
 5. **Use DCG** - The safety tool prevents costly mistakes
 
+## Learning & Knowledge Compounding
+
+### During Build: Automatic Learning Injection
+
+Ralph automatically captures and injects learnings into each task:
+
+```
+Task N completes → Agent outputs LEARNING:/NOTE:/TIP:
+                         ↓
+              Captured to learnings.md
+                         ↓
+Task N+1 starts → Recent learnings INJECTED into prompt
+                         ↓
+              Agent sees: "### Recent Learnings"
+                         "LEARNING: Watch for X"
+                         "TIP: Use Y pattern"
+```
+
+**What gets injected:**
+- Last 3 learning blocks from `learnings.md`
+- Last 15 lines of progress from `progress.txt`
+
+**How agents contribute:**
+```
+LEARNING: The worker client expects correlationId on all responses
+NOTE: Build fails silently if tsconfig.json has skipLibCheck
+TIP: Run npm run typecheck before npm run build for faster feedback
+```
+
+### Post-Build: Nightly Compound Learning
+
+Once your app is stable, add the full compound-engineering pattern for overnight evolution:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    NIGHTLY COMPOUND LOOP                         │
+│                                                                  │
+│  10:30 PM                              11:00 PM                  │
+│  ┌──────────────┐                     ┌──────────────┐          │
+│  │   Compound   │ ──────────────────▶ │    Auto      │          │
+│  │   Review     │   (CLAUDE.md now    │   Compound   │          │
+│  │              │    has learnings)   │              │          │
+│  └──────────────┘                     └──────────────┘          │
+│        │                                     │                   │
+│        ▼                                     ▼                   │
+│  • Review day's work                  • Pull latest (w/ learnings)│
+│  • Extract patterns/gotchas           • Pick #1 priority         │
+│  • Update CLAUDE.md                   • Create PRD → Tasks       │
+│  • Commit & push                      • Run Ralph                │
+│                                       • Create draft PR          │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**The compound effect**: Yesterday's learnings inform today's work. Your agent gets smarter every day.
+
+**Key components**:
+1. `daily-compound-review.sh` - Extracts learnings → updates CLAUDE.md
+2. `pick-next-priority.sh` - Reads backlog → selects top item
+3. `nightly-auto-compound.sh` - Full overnight pipeline
+4. launchd/cron scheduling - Runs while you sleep
+
+See: [Compound Engineering](https://github.com/kieranklaassen/compound-engineering), [Compound Product](https://github.com/kieranklaassen/compound-product)
+
+### Other Evolution Patterns
+
+| Pattern | Purpose | When to Add |
+|---------|---------|-------------|
+| **Nightly E2E** | Catch regressions overnight | After v1.0 stable |
+| **Dependency Bot** | Automated security updates | After deployment |
+| **Performance Budgets** | Track bundle size, load time | After optimization pass |
+| **Error Tracking** | Sentry/similar integration | Before production |
+| **Usage Analytics** | Understand user behavior | After launch |
+| **Tech Debt Reviews** | Periodic TODO/FIXME cleanup | Monthly cadence |
+
+### Evolution Workflow
+
+```bash
+# 1. Set up prioritized backlog
+mkdir -p reports
+# Add feature requests, bugs, improvements to reports/*.md
+
+# 2. Configure nightly schedule (macOS)
+# See .claude/tasks/onboarding-general/compound-learning-proposal.md
+
+# 3. Wake up to draft PRs
+gh pr list --state open --author @me
+```
+
+### When NOT to Use Nightly Automation
+
+- During initial build (you're actively engaged)
+- Major refactors (need human judgment)
+- Breaking changes (need coordination)
+- Security-sensitive changes (need review first)
+
 ## License
 
 MIT
 
 ## Links
 
+### Core Tools
 - [Beads (Task Tracker)](https://github.com/Dicklesworthstone/beads_rust)
 - [DCG (Safety Tool)](https://github.com/Dicklesworthstone/destructive_command_guard)
 - [Geoffrey Huntley's Ralph](https://ghuntley.com/ralph/)
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
+
+### Post-Build Evolution
+- [Compound Engineering Plugin](https://github.com/kieranklaassen/compound-engineering) - Learning extraction skill
+- [Compound Product](https://github.com/kieranklaassen/compound-product) - Automation layer for nightly execution
+
+### Documentation
+- `docs/AGENT_EVALUATION.md` - Agent testing best practices, TDD, Council of Subagents
+- `docs/WORKER_CLIENT_PATTERNS.md` - Patterns for Worker/IPC architectures
