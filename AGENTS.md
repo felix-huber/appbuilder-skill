@@ -225,13 +225,6 @@ Based on Doodlestein's methodology, different agents have different strengths:
 | Gemini (GMI) | Code review ONLY | Quality gate |
 | GPT-5.2 Pro | Heavy document reviews (PRD, UX, Plan) | Oracle reviews |
 
-### Ralph Agent Assignment (DEFAULT: Smart Routing)
-
-By default, `./scripts/ralph.sh` routes tasks intelligently:
-- **Backend tasks** (core, engine, api, data, worker, db) → **Codex** (fast)
-- **Frontend tasks** (ui, components, design, css, styles) → **Claude Code** (nuanced)
-- **Heavy doc reviews** (PRD, UX, Plan) → **GPT-5.2 Pro** via `/oracle` command
-
 ### Ralph Backpressure (UPDATED)
 
 **Every task must define verification/backpressure** (tests, typecheck, lint, etc).
@@ -325,27 +318,6 @@ Planning and reviewing in "plan space" is:
 - Much higher quality (easier to reason about)
 
 **DO NOT SKIP ITERATIONS. The extra planning time pays massive dividends during implementation.**
-
----
-
-## Landing the Plane (Session Completion)
-
-When ending a work session, complete ALL steps. Work is NOT complete until git push succeeds.
-
-1. **File issues** for remaining work (`br create ...`)
-2. **Run quality gates** if code changed
-3. **Update issue status** (`br close ...`)
-4. **PUSH TO REMOTE** (MANDATORY):
-   ```bash
-   git pull --rebase
-   br sync --flush-only
-   git add -A && git commit -m "Update work"
-   git push
-   ```
-5. **Verify** `git status` shows "up to date with origin"
-6. **Hand off** context for next session
-
-**NEVER stop before pushing — that leaves work stranded locally.**
 
 ---
 

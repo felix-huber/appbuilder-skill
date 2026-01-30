@@ -113,51 +113,6 @@ When starting a beads-tracked task:
 
 ---
 
-## Landing the Plane (Session Completion)
-
-When ending a work session, you MUST complete ALL steps below. Work is NOT complete until git push succeeds.
-
-**MANDATORY WORKFLOW:**
-
-1. **File issues for remaining work**
-   - Create issues for anything that needs follow-up
-
-2. **Run quality gates (if code changed)**
-   ```bash
-   npm run lint
-   npm run typecheck
-   npm test
-   ```
-
-3. **Update issue status**
-   - Close finished work, update in-progress items
-
-4. **PUSH TO REMOTE** — This is MANDATORY:
-   ```bash
-   git pull --rebase
-   br sync --flush-only  # Export to JSONL (does NOT run git commands)
-   git add -A && git commit -m "Update work"
-   git push
-   git status  # MUST show "up to date with origin"
-   ```
-
-5. **Clean up**
-   - Clear stashes, prune remote branches
-
-6. **Verify**
-   - All changes committed AND pushed
-
-7. **Hand off**
-   - Provide context for next session
-
-**CRITICAL RULES:**
-- Work is NOT complete until `git push` succeeds
-- NEVER stop before pushing — that leaves work stranded locally
-- NEVER say "ready to push when you are" — YOU must push
-- If push fails, resolve and retry until it succeeds
-
----
-
 ## Note for Codex/GPT-5.2
 
 If you are Codex or GPT-5.2 (or any non-Claude agent): another agent (often Claude Code) may have made changes to the working tree since you last saw it. Before assuming your mental model of the code is correct:
@@ -299,18 +254,6 @@ node scripts/compile_task_graph.js
 - Sentinel: anti-patterns, security, test cheating
 - Designer: UI/UX polish, accessibility, hierarchy
 - Healer: fixes issues found; re-run verification after fixes
-
----
-
-## Tool Routing (Doodlestein Methodology)
-
-**Ralph uses smart routing by default:**
-
-| Task Type | Tool | Why |
-|-----------|------|-----|
-| Backend (core, api, data, worker) | Codex | Fast iteration |
-| Frontend (ui, components, design) | Claude Code | Nuanced implementation |
-| Heavy doc reviews (PRD, UX, Plan) | GPT-5.2 Pro | Deep reasoning via /oracle |
 
 ---
 
