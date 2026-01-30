@@ -56,6 +56,10 @@ FRESH_EYES="false"     # Set to "true" for post-task review
 REVIEW_TOOL=""         # Empty = same as coding tool, "codex" or "claude" = cross-model review
 ALLOW_SAME_REVIEW_TOOL="false"
 MIN_REVIEW_PASSES=2
+ALLOW_NO_VERIFY="false"
+DEFAULT_VERIFY=""
+HAS_CLAUDE="false"
+HAS_CODEX="false"
 
 # Self-healing (from task-orchestrator pattern)
 SELF_HEAL="true"       # Auto-recover stuck tasks
@@ -146,6 +150,18 @@ parse_args() {
       --allow-same-review-tool)
         ALLOW_SAME_REVIEW_TOOL="true"
         shift
+        ;;
+      --allow-no-verify)
+        ALLOW_NO_VERIFY="true"
+        shift
+        ;;
+      --default-verify)
+        if [[ -z "${2:-}" || "$2" == -* ]]; then
+          log_error "--default-verify requires commands (semicolon or newline separated)"
+          exit 1
+        fi
+        DEFAULT_VERIFY="$2"
+        shift 2
         ;;
       --min-review-passes)
         if [[ -z "${2:-}" || "$2" == -* ]]; then
@@ -282,6 +298,8 @@ Options:
   --fresh-eyes                 Run fresh-eyes code review after each task
   --review-tool <claude|codex> Use different tool for code review (cross-model)
   --allow-same-review-tool     Allow review tool to match implementation tool
+  --allow-no-verify            Allow tasks without verification commands
+  --default-verify <cmds>      Default verification commands if task is missing them
   --min-review-passes <n>      Minimum fresh-eyes passes before accepting clean (default: 2)
   --no-self-heal               Disable auto-recovery of stuck tasks
   --stall-threshold <min>      Minutes before task is considered stuck (default: 20)
@@ -432,6 +450,9 @@ check_prerequisites() {
   if command -v codex &> /dev/null; then
     has_codex=true
   fi
+
+  HAS_CLAUDE="$has_claude"
+  HAS_CODEX="$has_codex"
   
   # Check for selected tool
   case "$TOOL" in
@@ -688,6 +709,54 @@ get_tool_for_task() {
   fi
 }
 
+extract_section() {
+  local text="$1"
+  local header_regex="$2"
+  printf '%s\n' "$text" | awk -v re="$header_regex" '
+    BEGIN{found=0}
+    $0 ~ re {found=1; next}
+    found && /^[A-Z][A-Za-z ]+:/ {exit}
+    found {print}
+  ' | sed -e 's/^[ -]*//'
+}
+
+build_task_json_from_bead() {
+  local bead_json="$1"
+  local id
+  local title
+  local desc
+  local labels_json
+  id=$(echo "$bead_json" | jq -r '.id')
+  title=$(echo "$bead_json" | jq -r '.title')
+  desc=$(echo "$bead_json" | jq -r '.description // ""')
+  labels_json=$(echo "$bead_json" | jq -c '.labels // [] | map(ascii_downcase)')
+
+  local verification
+  local llm_verification
+  local allowed_paths
+  verification=$(extract_section "$desc" '^(Verification:|VERIFICATION:)')
+  llm_verification=$(extract_section "$desc" '^(LLM Verification:|LLM VERIFY:|Subjective Checks:|SUBJECTIVE CHECKS:)')
+  allowed_paths=$(extract_section "$desc" '^(Allowed Paths:|ALLOWED PATHS:|Files to modify:|FILES TO MODIFY:)')
+
+  jq -n \
+    --arg id "$id" \
+    --arg subject "$title" \
+    --arg description "$desc" \
+    --arg verification "$verification" \
+    --arg llmVerification "$llm_verification" \
+    --arg allowedPaths "$allowed_paths" \
+    --argjson tags "$labels_json" \
+    '{
+      id: $id,
+      subject: $subject,
+      description: $description,
+      tags: $tags,
+      allowedPaths: ($allowedPaths | split("\n") | map(select(length>0))),
+      verification: ($verification | split("\n") | map(select(length>0))),
+      llmVerification: ($llmVerification | split("\n") | map(select(length>0)))
+    }'
+}
+
 get_review_tool_for_task() {
   local selected_tool="$1"
   if [[ -n "$REVIEW_TOOL" ]]; then
@@ -700,6 +769,176 @@ get_review_tool_for_task() {
     codex) echo "claude" ;;
     *) echo "$selected_tool" ;;
   esac
+}
+
+load_default_verification() {
+  local default_value="${DEFAULT_VERIFY:-${RALPH_DEFAULT_VERIFY:-}}"
+  if [[ -z "$default_value" && -f "$PROJECT_ROOT/verification.txt" ]]; then
+    default_value=$(grep -v '^[[:space:]]*#' "$PROJECT_ROOT/verification.txt" | sed '/^[[:space:]]*$/d')
+  fi
+  printf '%s\n' "$default_value"
+}
+
+get_task_verification() {
+  local task_json="$1"
+  echo "$task_json" | jq -r '
+    (.verification // [])
+    | if type=="array" then join("\n")
+      elif type=="string" then .
+      else "" end
+  '
+}
+
+get_task_llm_verification() {
+  local task_json="$1"
+  echo "$task_json" | jq -r '
+    (.llmVerification // [])
+    | if type=="array" then join("\n")
+      elif type=="string" then .
+      else "" end
+  '
+}
+
+ensure_task_verification() {
+  local task_json="$1"
+  local task_id
+  task_id=$(echo "$task_json" | jq -r '.id')
+  local verification
+  verification=$(get_task_verification "$task_json")
+
+  if [[ -z "$verification" ]]; then
+    local default_verify
+    default_verify=$(load_default_verification)
+    if [[ -n "$default_verify" ]]; then
+      log_warn "Task $task_id missing verification. Using default verification."
+      task_json=$(echo "$task_json" | jq --arg v "$default_verify" '.verification = ($v | split("\n") | map(select(length>0)))')
+      verification="$default_verify"
+    elif [[ "$ALLOW_NO_VERIFY" == "true" ]]; then
+      log_warn "Task $task_id missing verification. Continuing due to --allow-no-verify."
+      printf '%s\n' "$task_json"
+      return 0
+    else
+      log_error "Task $task_id missing verification/backpressure."
+      log_error "Add task verification, set RALPH_DEFAULT_VERIFY, or use --default-verify."
+      return 1
+    fi
+  fi
+
+  printf '%s\n' "$task_json"
+}
+
+run_task_verification() {
+  local task_id="$1"
+  local verification="$2"
+
+  if [[ -z "$verification" ]]; then
+    return 0
+  fi
+
+  log_info "Running task-specific verification..."
+  while IFS= read -r cmd; do
+    cmd=$(echo "$cmd" | xargs)
+    [[ -z "$cmd" ]] && continue
+    log_info "Verify: $cmd"
+    if ! (cd "$PROJECT_ROOT" && bash -lc "$cmd"); then
+      log_error "Task verification failed: $cmd"
+      {
+        echo ""
+        echo "### VERIFICATION FAILURE - $(date -Iseconds)"
+        echo "- Task: $task_id"
+        echo "- Command: $cmd"
+      } >> "$PROGRESS_FILE"
+      return 1
+    fi
+  done <<< "$verification"
+
+  return 0
+}
+
+select_llm_review_tool() {
+  if [[ -n "$REVIEW_TOOL" ]]; then
+    echo "$REVIEW_TOOL"
+    return 0
+  fi
+  if [[ "$HAS_CLAUDE" == "true" ]]; then
+    echo "claude"
+    return 0
+  fi
+  if [[ "$HAS_CODEX" == "true" ]]; then
+    echo "codex"
+    return 0
+  fi
+  return 1
+}
+
+run_llm_verification() {
+  local task_id="$1"
+  local criteria="$2"
+
+  if [[ -z "$criteria" ]]; then
+    return 0
+  fi
+
+  local tool
+  if ! tool=$(select_llm_review_tool); then
+    log_error "No LLM review tool available for subjective verification."
+    return 1
+  fi
+
+  local diff_content=""
+  local changed_files="unknown"
+  if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
+    diff_content=$(git diff HEAD 2>/dev/null || git diff 2>/dev/null || echo "")
+    changed_files=$(git diff --name-status HEAD 2>/dev/null || git diff --name-status 2>/dev/null || echo "unknown")
+  elif git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
+    diff_content=$(git show --pretty="" HEAD 2>/dev/null || echo "")
+    changed_files=$(git show --name-status --pretty="" HEAD 2>/dev/null || echo "unknown")
+  fi
+
+  local diff_note=""
+  if [[ -n "$diff_content" ]]; then
+    local diff_line_count
+    diff_line_count=$(printf '%s\n' "$diff_content" | wc -l | tr -d ' ')
+    if (( diff_line_count > 500 )); then
+      diff_content=$(printf '%s\n' "$diff_content" | head -n 500)
+      diff_note="NOTE: Diff truncated to first 500 lines."
+    fi
+  fi
+
+  local prompt="You are a strict QA judge verifying subjective acceptance criteria.
+Evaluate the criteria below based on the code changes and repository state.
+If criteria are satisfied, output exactly: LLM_PASS
+If criteria are NOT satisfied or cannot be verified, output exactly: LLM_FAIL and a one-line reason.
+
+CRITERIA:
+$criteria
+
+CHANGED FILES:
+$changed_files
+
+DIFF:
+$diff_note
+$diff_content"
+
+  local output
+  set +e
+  output=$(run_with_tool "$tool" "$prompt" 2>&1)
+  set -e
+
+  if echo "$output" | grep -qx "LLM_PASS"; then
+    log_success "LLM verification passed"
+    return 0
+  fi
+
+  log_error "LLM verification failed"
+  echo "$output" | head -20
+  {
+    echo ""
+    echo "### LLM VERIFICATION FAILURE - $(date -Iseconds)"
+    echo "- Task: $task_id"
+    echo "- Tool: $tool"
+  } >> "$PROGRESS_FILE"
+  return 1
 }
 
 # Run a task with the specified tool
@@ -1327,28 +1566,26 @@ get_next_task_beads() {
   fi
   
   # Get the first ready task and convert to our format
-  echo "$ready_tasks" | jq -r '
-    .[0] | {
-      id: .id,
-      subject: .title,
-      description: (.description // ""),
-      tags: ((.labels // []) | map(ascii_downcase)),
-      priority: .priority,
-      type: .type
-    }
-  '
+  local bead_json
+  bead_json=$(echo "$ready_tasks" | jq -c '.[0]')
+  if [[ -z "$bead_json" || "$bead_json" == "null" ]]; then
+    echo ""
+    return
+  fi
+  build_task_json_from_bead "$bead_json"
 }
 
 # Get task by ID
 get_task_by_id() {
   local task_id="$1"
   if [[ "$USE_BEADS" == "true" ]]; then
-    br show "$task_id" --json 2>/dev/null | jq -r '{
-      id: .id,
-      subject: .title,
-      description: (.description // ""),
-      tags: ((.labels // []) | map(ascii_downcase))
-    }'
+    local bead_json
+    bead_json=$(br show "$task_id" --json 2>/dev/null || echo "")
+    if [[ -z "$bead_json" || "$bead_json" == "null" ]]; then
+      echo ""
+      return
+    fi
+    build_task_json_from_bead "$bead_json"
   else
     jq -r --arg id "$task_id" '.tasks[] | select(.id == $id)' "$TASK_GRAPH"
   fi
@@ -2166,7 +2403,7 @@ fi)
 1. Review the context above from previous iterations
 2. Implement the task following the description
 3. Run the verification commands to confirm success
-4. **MANDATORY: Run build verification** (see below)
+4. **MANDATORY: Run task verification and build verification** (see below)
 5. If all verifications pass, output <promise>TASK_COMPLETE</promise>
    (Do NOT commit or push - Ralph handles branching/commits/PRs)
 
@@ -2193,7 +2430,10 @@ If you find yourself wanting to do any of these, STOP and either:
 
 The orchestrator will detect these patterns and REJECT the task.
 
-## ⚠️ MANDATORY BUILD VERIFICATION ⚠️
+## ⚠️ MANDATORY TASK + BUILD VERIFICATION ⚠️
+
+Before outputting TASK_COMPLETE, you MUST run the task verification
+commands listed in this task's Verification section and they MUST pass.
 
 Before outputting TASK_COMPLETE, you MUST run these commands and they MUST pass:
 
@@ -2402,9 +2642,23 @@ main() {
       fi
     fi
     
+    task_json=$(ensure_task_verification "$task_json") || {
+      local failed_id
+      failed_id=$(echo "$task_json" | jq -r '.id // "unknown"')
+      mark_task_failed "$failed_id"
+      log_warn "Task $failed_id missing verification. Marked failed."
+      print_status
+      sleep 2
+      continue
+    }
+
     local task_id=$(echo "$task_json" | jq -r '.id')
     local subject=$(echo "$task_json" | jq -r '.subject')
     local tags=$(echo "$task_json" | jq -r '(.tags // []) | join(", ")')
+    local task_verification
+    task_verification=$(get_task_verification "$task_json")
+    local task_llm_verification
+    task_llm_verification=$(get_task_llm_verification "$task_json")
     
     log_info "Task: $task_id"
     log_info "Subject: $subject"
@@ -2440,6 +2694,23 @@ main() {
     # Check for completion signal
     if echo "$OUTPUT" | grep -q "<promise>TASK_COMPLETE</promise>"; then
       log_info "Agent reports task complete. Verifying build..."
+
+      # CRITICAL: Run task-specific verification BEFORE any reviews
+      if ! run_task_verification "$task_id" "$task_verification"; then
+        log_error "Task-specific verification FAILED"
+        mark_task_failed "$task_id"
+        clear_task_tracking "$task_id"
+        {
+          echo ""
+          echo "### Iteration $i - $(date -Iseconds)"
+          echo "- Task: $task_id - $subject"
+          echo "- Tool: $selected_tool"
+          echo "- Status: ❌ FAILED (task verification)"
+        } >> "$PROGRESS_FILE"
+        print_status
+        sleep 2
+        continue
+      fi
 
       # CRITICAL: Verify build BEFORE any reviews
       # This catches TypeScript errors, broken imports, and integration issues
@@ -2535,6 +2806,26 @@ main() {
           continue
         fi
         log_success "Post-review verification passed!"
+      fi
+
+      # LLM-as-judge verification for subjective criteria (if provided)
+      if [[ -n "$task_llm_verification" ]]; then
+        log_info "Running LLM verification (subjective checks)..."
+        if ! run_llm_verification "$task_id" "$task_llm_verification"; then
+          log_error "LLM verification FAILED"
+          mark_task_failed "$task_id"
+          clear_task_tracking "$task_id"
+          {
+            echo ""
+            echo "### Iteration $i - $(date -Iseconds)"
+            echo "- Task: $task_id - $subject"
+            echo "- Tool: $selected_tool"
+            echo "- Status: ❌ FAILED (LLM verification)"
+          } >> "$PROGRESS_FILE"
+          print_status
+          sleep 2
+          continue
+        fi
       fi
 
       # ALL CHECKS PASSED - Now mark task as completed

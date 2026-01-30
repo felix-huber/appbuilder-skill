@@ -13,6 +13,7 @@ MAX_TASK_ATTEMPTS=3
 STALL_MINUTES=45
 ALLOW_NO_TESTS="false"
 ALLOW_NO_VERIFY="false"
+DEFAULT_VERIFY=""
 LOOP_MODE="false"
 USE_BEADS="false"
 AUTO_COMMIT="true"
@@ -29,6 +30,7 @@ DESCRIPTION=""
 ACCEPTANCE=""
 FILES_HINT=""
 VERIFY_CMDS=""
+LLM_VERIFY=""
 TAGS=""
 
 usage() {
@@ -44,6 +46,8 @@ Options:
   --tool <claude|codex>    Tool for implementation (default: claude)
   --review-tool <claude|codex|manual> Tool for review (default: opposite of --tool)
   --verification <cmds>    Semicolon-separated verification commands
+  --default-verify <cmds>  Default verification commands if task is missing them
+  --llm-verify <criteria>  LLM-based subjective checks (one per line)
   --max-iterations <n>     Max review loops (default: 3)
   --max-attempts <n>        Max attempts per task (default: 3)
   --stall-minutes <n>       Max minutes per tool run if timeout is available (default: 45)
@@ -80,6 +84,10 @@ parse_args() {
         REVIEW_TOOL="$2"; shift 2 ;;
       --verification)
         VERIFY_CMDS="$2"; shift 2 ;;
+      --default-verify)
+        DEFAULT_VERIFY="$2"; shift 2 ;;
+      --llm-verify)
+        LLM_VERIFY="$2"; shift 2 ;;
       --max-iterations)
         MAX_ITERATIONS="$2"; shift 2 ;;
       --max-attempts)
@@ -112,6 +120,14 @@ parse_args() {
 
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "Missing required command: $1"
+}
+
+load_default_verification() {
+  local default_value="${DEFAULT_VERIFY:-${RALPH_DEFAULT_VERIFY:-}}"
+  if [[ -z "$default_value" && -f "$PROJECT_ROOT/verification.txt" ]]; then
+    default_value=$(grep -v '^[[:space:]]*#' "$PROJECT_ROOT/verification.txt" | sed '/^[[:space:]]*$/d')
+  fi
+  printf '%s\n' "$default_value"
 }
 
 init_run_files() {
@@ -349,6 +365,7 @@ load_task() {
     if [[ -n "$DESCRIPTION" ]]; then
       local acc
       local ver
+      local llm
       local files
       acc=$(printf '%s\n' "$DESCRIPTION" | awk '
         BEGIN{found=0}
@@ -359,6 +376,12 @@ load_task() {
       ver=$(printf '%s\n' "$DESCRIPTION" | awk '
         BEGIN{found=0}
         /^(Verification:|VERIFICATION:)/ {found=1; next}
+        found && /^[A-Z][A-Za-z ]+:/ {exit}
+        found {print}
+      ')
+      llm=$(printf '%s\n' "$DESCRIPTION" | awk '
+        BEGIN{found=0}
+        /^(LLM Verification:|LLM VERIFY:|Subjective Checks:|SUBJECTIVE CHECKS:)/ {found=1; next}
         found && /^[A-Z][A-Za-z ]+:/ {exit}
         found {print}
       ')
@@ -373,6 +396,9 @@ load_task() {
       fi
       if [[ -n "$ver" && -z "$VERIFY_CMDS" ]]; then
         VERIFY_CMDS=$(printf '%s\n' "$ver" | sed -e 's/^[ -]*//' | paste -sd ';' -)
+      fi
+      if [[ -n "$llm" && -z "$LLM_VERIFY" ]]; then
+        LLM_VERIFY=$(printf '%s\n' "$llm" | sed -e 's/^[ -]*//' | paste -sd '\n' -)
       fi
       if [[ -n "$files" ]]; then
         FILES_HINT=$(printf '%s\n' "$files" | sed -e 's/^[ -]*//' | paste -sd ', ' -)
@@ -393,6 +419,9 @@ load_task() {
     if [[ -z "$VERIFY_CMDS" ]]; then
       VERIFY_CMDS=$(jq -r --arg id "$TASK_ID" '.phases[].tasks[] | select(.id==$id) | .verification // [] | if type=="array" then join(";") else . end' "$TASK_GRAPH")
     fi
+    if [[ -z "$LLM_VERIFY" ]]; then
+      LLM_VERIFY=$(jq -r --arg id "$TASK_ID" '.phases[].tasks[] | select(.id==$id) | .llmVerification // [] | if type=="array" then join("\n") else . end' "$TASK_GRAPH")
+    fi
   fi
 
   if [[ -z "$SUBJECT" ]]; then
@@ -400,6 +429,14 @@ load_task() {
   fi
   if [[ -z "$ACCEPTANCE" ]]; then
     ACCEPTANCE="(not provided - see description)"
+  fi
+
+  if [[ -z "$VERIFY_CMDS" ]]; then
+    local default_verify
+    default_verify=$(load_default_verification)
+    if [[ -n "$default_verify" ]]; then
+      VERIFY_CMDS=$(printf '%s\n' "$default_verify" | paste -sd ';' -)
+    fi
   fi
 }
 
@@ -519,6 +556,46 @@ run_verification() {
   return 0
 }
 
+run_llm_verification() {
+  local criteria="$1"
+  if [[ -z "$criteria" ]]; then
+    return 0
+  fi
+  local diff
+  diff=$(collect_diff)
+  local files
+  files=$(changed_files)
+
+  local prompt="You are a strict QA judge for subjective acceptance criteria.
+If criteria are satisfied, output exactly: LLM_PASS
+If criteria are NOT satisfied or cannot be verified, output exactly: LLM_FAIL and a one-line reason.
+
+CRITERIA:
+$criteria
+
+CHANGED FILES:
+$files
+
+DIFF:
+$diff"
+
+  local output
+  set +e
+  output=$(run_with_tool "$REVIEW_TOOL" "$prompt")
+  local rc=$?
+  set -e
+  if [[ "$rc" -ne 0 ]]; then
+    return 1
+  fi
+  if echo "$output" | grep -qx "LLM_PASS"; then
+    log "LLM verification passed."
+    return 0
+  fi
+  log "LLM verification failed."
+  echo "$output" | head -20
+  return 1
+}
+
 build_prompt_impl() {
   cat <<EOF
 You are implementing task $TASK_ID: $SUBJECT.
@@ -532,6 +609,12 @@ $DESCRIPTION
 
 Acceptance Criteria:
 $ACCEPTANCE
+
+$(if [[ -n "$LLM_VERIFY" ]]; then
+echo "LLM Verification (subjective checks):"
+echo "$LLM_VERIFY"
+echo ""
+fi)
 
 Strict requirements:
 - TDD is required for feature work. Write tests first.
@@ -656,6 +739,16 @@ run_task_loop() {
       update_loop_state "verification_failed" "$phase" "$attempt" "verification failed"
       phase="implement"
       continue
+    fi
+
+    if [[ -n "$LLM_VERIFY" ]]; then
+      if ! run_llm_verification "$LLM_VERIFY"; then
+        log "LLM verification failed. Retrying."
+        log_progress "Task $TASK_ID attempt $attempt failed LLM verification"
+        update_loop_state "verification_failed" "$phase" "$attempt" "llm verification failed"
+        phase="implement"
+        continue
+      fi
     fi
 
     local diff
