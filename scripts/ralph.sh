@@ -1094,18 +1094,27 @@ run_fresh_eyes_review() {
       log_info "  Codex review pass $pass/$max_review_passes (min $min_review_passes)..."
 
       # Check if there are uncommitted changes
+      local has_uncommitted=true
       if [[ -z "$(git status --porcelain 2>/dev/null)" ]]; then
-        log_info "  No uncommitted changes to review"
-        return 0
+        has_uncommitted=false
       fi
 
       # Generate diff for Codex to review
-      local diff_content
-      diff_content=$(git diff HEAD 2>/dev/null || git diff 2>/dev/null || echo "")
-      local staged_diff
-      staged_diff=$(git diff --cached 2>/dev/null || echo "")
-      local changed_files
-      changed_files=$(git diff --name-status HEAD 2>/dev/null || git diff --name-status 2>/dev/null || echo "unknown")
+      local diff_content=""
+      local staged_diff=""
+      local changed_files="unknown"
+      if [[ "$has_uncommitted" == "true" ]]; then
+        diff_content=$(git diff HEAD 2>/dev/null || git diff 2>/dev/null || echo "")
+        staged_diff=$(git diff --cached 2>/dev/null || echo "")
+        changed_files=$(git diff --name-status HEAD 2>/dev/null || git diff --name-status 2>/dev/null || echo "unknown")
+      else
+        if ! git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
+          log_info "  No uncommitted changes and no prior commit to review"
+          return 0
+        fi
+        diff_content=$(git show --pretty="" HEAD 2>/dev/null || echo "")
+        changed_files=$(git show --name-status --pretty="" HEAD 2>/dev/null || echo "unknown")
+      fi
 
       local combined_diff=""
       if [[ -n "$diff_content" ]]; then

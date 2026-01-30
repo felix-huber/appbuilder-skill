@@ -137,7 +137,7 @@ EOF
 
 resolve_review_tool() {
   case "$TOOL" in
-    claude|codex|manual) ;;
+    claude|codex) ;;
     *)
       fail "Unsupported tool: $TOOL"
       ;;
@@ -147,7 +147,6 @@ resolve_review_tool() {
     case "$TOOL" in
       claude) REVIEW_TOOL="codex" ;;
       codex) REVIEW_TOOL="claude" ;;
-      *) REVIEW_TOOL="manual" ;;
     esac
   fi
 
@@ -173,28 +172,28 @@ update_loop_state() {
   [[ "$LOOP_MODE" == "true" ]] && loop_json=true
   [[ "$USE_BEADS" == "true" ]] && beads_json=true
 
-  cat <<EOF > "$LOOP_STATE_FILE"
-{
-  "runId": "$RUN_ID",
-  "updatedAt": "$(date -Iseconds)",
-  "mode": {
-    "loop": $loop_json,
-    "beads": $beads_json
-  },
-  "task": {
-    "id": "$TASK_ID",
-    "subject": "$SUBJECT",
-    "status": "$status",
-    "phase": "$phase",
-    "attempt": $attempt
-  },
-  "tools": {
-    "implementer": "$TOOL",
-    "reviewer": "$REVIEW_TOOL"
-  },
-  "note": "$note"
-}
-EOF
+  require_cmd jq
+  jq -n \
+    --arg runId "$RUN_ID" \
+    --arg updatedAt "$(date -Iseconds)" \
+    --arg taskId "$TASK_ID" \
+    --arg subject "$SUBJECT" \
+    --arg status "$status" \
+    --arg phase "$phase" \
+    --arg note "$note" \
+    --arg implementer "$TOOL" \
+    --arg reviewer "$REVIEW_TOOL" \
+    --argjson attempt "$attempt" \
+    --argjson loop "$loop_json" \
+    --argjson beads "$beads_json" \
+    '{
+      runId: $runId,
+      updatedAt: $updatedAt,
+      mode: { loop: $loop, beads: $beads },
+      task: { id: $taskId, subject: $subject, status: $status, phase: $phase, attempt: $attempt },
+      tools: { implementer: $implementer, reviewer: $reviewer },
+      note: $note
+    }' > "$LOOP_STATE_FILE"
 }
 
 log_progress() {
