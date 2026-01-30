@@ -167,7 +167,8 @@ require_test_changes() {
   fi
   local files
   files=$(git diff --name-only HEAD 2>/dev/null || git diff --name-only 2>/dev/null || echo "")
-  if ! echo "$files" | grep -E -q '(^|/)(tests?|__tests__|__test__)/|\.test\.|\.spec\.|_test\.py$|test_.*\.py$|\.bats$'; then
+  local test_pattern='(^|/)(tests?|__tests__|__test__|specs?)/|\.test\.|\.spec\.|_test\.(py|go|rs|rb|php)$|_spec\.rb$|test_.*\.py$|\.bats$'
+  if ! echo "$files" | grep -E -q "$test_pattern"; then
     fail "No test changes detected. Add real tests or pass --allow-no-tests for non-test tasks."
   fi
 }

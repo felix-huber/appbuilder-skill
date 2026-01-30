@@ -92,5 +92,9 @@ Repeat until `NO_ISSUES_FOUND`.
 - Tests must assert real behavior (exit codes, side effects, persistence)
 - No config-only or tautological assertions
 
-## Optional: strict_ralph.sh
+## strict_ralph.sh (automated strict loop)
 Use `./scripts/strict_ralph.sh` to automate the strict loop.
+
+Notes:
+- It enforces test-file changes via filename patterns (tests/, *_test.go, _spec.rb, etc).
+- If your tests live inline in non-test files, use `--allow-no-tests` and explain why.
