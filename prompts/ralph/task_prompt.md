@@ -76,7 +76,7 @@ Determine if this is a testable task by checking tags:
 9. **MANDATORY: Self-review with fresh eyes** (see below)
 10. If all verifications pass, output `<promise>TASK_COMPLETE</promise>`
     (Do NOT commit or push - Ralph handles branching/commits/PRs)
-11. Append learnings to `progress.txt`
+11. Include any learnings in your completion message (use `LEARNING:` prefix)
 
 ## Critical Rules
 
@@ -122,8 +122,7 @@ If ALL acceptance criteria are met and verification passes, output exactly:
 Then include details:
 ```
 Files modified: [list]
-Commit: [hash]
-Learnings: [any gotchas discovered]
+LEARNING: [any gotchas discovered]
 ```
 
 If you cannot complete the task (unrecoverable error), output exactly:
