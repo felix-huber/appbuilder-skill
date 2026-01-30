@@ -10,12 +10,17 @@ REVIEW_TOOL="claude"
 MAX_ITERATIONS=3
 ALLOW_NO_TESTS="false"
 ALLOW_NO_VERIFY="false"
+LOOP_MODE="false"
+AUTO_COMMIT="true"
+AUTO_PUSH="false"
+COMMIT_PREFIX="feat"
 TASK_ID=""
 SUBJECT=""
 DESCRIPTION=""
 ACCEPTANCE=""
 FILES_HINT=""
 VERIFY_CMDS=""
+TAGS=""
 
 usage() {
   cat <<'USAGE'
@@ -33,6 +38,10 @@ Options:
   --max-iterations <n>     Max review loops (default: 3)
   --allow-no-tests         Allow tasks with no test changes
   --allow-no-verify        Allow tasks with no verification commands
+  --loop                   Auto-pick next unblocked task until done
+  --no-commit              Do not auto-commit after successful review
+  --auto-push              Push after each commit (requires clean upstream)
+  --commit-prefix <type>   Commit prefix (default: feat)
   -h, --help               Show help
 
 Notes:
@@ -64,6 +73,14 @@ parse_args() {
         ALLOW_NO_TESTS="true"; shift ;;
       --allow-no-verify)
         ALLOW_NO_VERIFY="true"; shift ;;
+      --loop)
+        LOOP_MODE="true"; shift ;;
+      --no-commit)
+        AUTO_COMMIT="false"; shift ;;
+      --auto-push)
+        AUTO_PUSH="true"; shift ;;
+      --commit-prefix)
+        COMMIT_PREFIX="$2"; shift 2 ;;
       -h|--help)
         usage; exit 0 ;;
       *)
@@ -74,6 +91,77 @@ parse_args() {
 
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "Missing required command: $1"
+}
+
+require_clean_worktree() {
+  if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
+    fail "Working tree is not clean. Commit or stash changes before running strict loop."
+  fi
+}
+
+select_next_task() {
+  require_cmd jq
+  local next
+  next=$(jq -r '
+    def doneIds:
+      [ .phases[].tasks[]
+        | select((.status // "pending") == "complete" or (.status // "pending") == "committed")
+        | .id ];
+    def isUnblocked($done):
+      ((.status // "pending") == "pending")
+      and (((.dependsOn // []) | length) == 0
+           or ((.dependsOn // []) | all(. as $d | $done | index($d))));
+
+    doneIds as $done
+    | .phases
+    | map(.tasks | map(select(isUnblocked($done))))
+    | map(select(length > 0) | .[0])
+    | .[0].id // empty
+  ' "$TASK_GRAPH")
+  if [[ -z "$next" ]]; then
+    return 1
+  fi
+  TASK_ID="$next"
+}
+
+update_task_status() {
+  local id="$1"
+  local status="$2"
+  local commit_hash="${3:-}"
+  local now
+  now=$(date -Iseconds)
+  local tmp
+  tmp=$(mktemp)
+
+  jq --arg id "$id" --arg status "$status" --arg now "$now" --arg ch "$commit_hash" '
+    .phases |= map(
+      .tasks |= map(
+        if .id == $id then
+          .status = $status
+          | .lastProgress = $now
+          | (if $status == "running" then .startedAt = $now else . end)
+          | (if $status == "committed" or $status == "complete" then .completedAt = $now else . end)
+          | (if $status == "committed" and ($ch | length) > 0 then .commitHash = $ch else . end)
+        else
+          .
+        end
+      )
+    )
+  ' "$TASK_GRAPH" > "$tmp" && mv "$tmp" "$TASK_GRAPH"
+}
+
+should_require_tests() {
+  local tags="$1"
+  if [[ -z "$tags" ]]; then
+    return 0
+  fi
+  if echo "$tags" | grep -E -qi '(core|api|ui|component|worker|data|feature|backend|frontend|db)'; then
+    return 0
+  fi
+  if echo "$tags" | grep -E -qi '(docs?|chore|setup|config|infra|ops|verify)'; then
+    return 1
+  fi
+  return 0
 }
 
 load_task() {
@@ -89,6 +177,7 @@ load_task() {
   DESCRIPTION=$(jq -r --arg id "$TASK_ID" '.tasks[] | select(.id==$id) | .description // ""' "$TASK_GRAPH")
   FILES_HINT=$(jq -r --arg id "$TASK_ID" '.tasks[] | select(.id==$id) | .files // [] | if type=="array" then join(", ") else . end' "$TASK_GRAPH")
   ACCEPTANCE=$(jq -r --arg id "$TASK_ID" '.tasks[] | select(.id==$id) | .acceptance // [] | if type=="array" then join("\n") else . end' "$TASK_GRAPH")
+  TAGS=$(jq -r --arg id "$TASK_ID" '.tasks[] | select(.id==$id) | .tags // [] | if type=="array" then join(",") else . end' "$TASK_GRAPH")
 
   if [[ -z "$VERIFY_CMDS" ]]; then
     VERIFY_CMDS=$(jq -r --arg id "$TASK_ID" '.tasks[] | select(.id==$id) | .verification // [] | if type=="array" then join(";") else . end' "$TASK_GRAPH")
@@ -163,6 +252,10 @@ require_changes() {
 
 require_test_changes() {
   if [[ "$ALLOW_NO_TESTS" == "true" ]]; then
+    return 0
+  fi
+  if ! should_require_tests "$TAGS"; then
+    log "Skipping test-change requirement for non-test task tags: $TAGS"
     return 0
   fi
   local files
@@ -263,12 +356,19 @@ Rules:
 EOF
 }
 
-main() {
-  parse_args "$@"
-  load_task
+commit_task() {
+  if [[ "$AUTO_COMMIT" != "true" ]]; then
+    return 0
+  fi
+  git add -A
+  local message="$COMMIT_PREFIX($TASK_ID): $SUBJECT"
+  git commit -m "$message"
+  if [[ "$AUTO_PUSH" == "true" ]]; then
+    git push
+  fi
+}
 
-  log "Task: $TASK_ID - $SUBJECT"
-
+run_task_loop() {
   local issues=""
   local iter
   for ((iter=1; iter<=MAX_ITERATIONS; iter++)); do
@@ -294,20 +394,50 @@ main() {
 
     if echo "$review_output" | grep -qx "NO_ISSUES_FOUND"; then
       log "Review clean. Task complete."
-      exit 0
+      return 0
     fi
 
     issues=$(echo "$review_output" | grep -E '^\[P[123]\]' || true)
     if [[ -z "$issues" ]]; then
       log "Review output contained no parsable issues. Failing for safety."
       echo "$review_output"
-      exit 1
+      return 1
     fi
 
     log "Issues found. Re-running implementer with fixes."
   done
 
   fail "Exceeded max iterations ($MAX_ITERATIONS) without clean review."
+}
+
+main() {
+  parse_args "$@"
+
+  if [[ "$LOOP_MODE" == "true" ]]; then
+    require_clean_worktree
+    while select_next_task; do
+      VERIFY_CMDS=""
+      load_task
+      log "Next task: $TASK_ID - $SUBJECT"
+      update_task_status "$TASK_ID" "running"
+      if ! run_task_loop; then
+        update_task_status "$TASK_ID" "error"
+        fail "Task $TASK_ID failed review."
+      fi
+      commit_task
+      local ch
+      ch=$(git rev-parse HEAD 2>/dev/null || echo "")
+      update_task_status "$TASK_ID" "committed" "$ch"
+      require_clean_worktree
+    done
+    log "No more unblocked tasks found. Done."
+    exit 0
+  fi
+
+  load_task
+  log "Task: $TASK_ID - $SUBJECT"
+  run_task_loop
+  exit 0
 }
 
 main "$@"
