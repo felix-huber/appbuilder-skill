@@ -14,6 +14,7 @@ STALL_MINUTES=45
 ALLOW_NO_TESTS="false"
 ALLOW_NO_VERIFY="false"
 DEFAULT_VERIFY=""
+ALLOW_DIRTY="false"
 LOOP_MODE="false"
 USE_BEADS="false"
 AUTO_COMMIT="true"
@@ -54,6 +55,7 @@ Options:
   --allow-no-tests         Allow tasks with no test changes
   --allow-no-verify        Allow tasks with no verification commands
   --allow-same-review-tool Allow review tool to match implementation tool
+  --allow-dirty            Allow running loop with uncommitted changes (not recommended)
   --loop                   Auto-pick next unblocked task until done
   --beads                  Use beads_rust (br) instead of task-graph.json
   --no-commit              Do not auto-commit after successful review
@@ -100,6 +102,8 @@ parse_args() {
         ALLOW_NO_VERIFY="true"; shift ;;
       --allow-same-review-tool)
         ALLOW_SAME_REVIEW_TOOL="true"; shift ;;
+      --allow-dirty)
+        ALLOW_DIRTY="true"; shift ;;
       --loop)
         LOOP_MODE="true"; shift ;;
       --beads)
@@ -243,6 +247,10 @@ require_beads() {
 }
 
 require_clean_worktree() {
+  if [[ "$ALLOW_DIRTY" == "true" ]]; then
+    log "Warning: running with dirty worktree (--allow-dirty)."
+    return 0
+  fi
   if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
     fail "Working tree is not clean. Commit or stash changes before running strict loop."
   fi
@@ -353,10 +361,10 @@ load_task() {
     require_beads
     require_cmd jq
     local bead
-    bead=$(br show "$TASK_ID" --json 2>/dev/null || echo "{}")
-    SUBJECT=$(echo "$bead" | jq -r '.title // ""')
-    DESCRIPTION=$(echo "$bead" | jq -r '.description // ""')
-    TAGS=$(echo "$bead" | jq -r '.labels // [] | if type=="array" then join(",") else . end')
+    bead=$(br show "$TASK_ID" --json 2>/dev/null || echo "[]")
+    SUBJECT=$(echo "$bead" | jq -r 'if type=="array" then .[0] else . end | .title // ""')
+    DESCRIPTION=$(echo "$bead" | jq -r 'if type=="array" then .[0] else . end | .description // ""')
+    TAGS=$(echo "$bead" | jq -r 'if type=="array" then .[0] else . end | .labels // [] | if type=="array" then join(",") else . end')
     FILES_HINT=""
     ACCEPTANCE=""
     if [[ -z "$VERIFY_CMDS" ]]; then
