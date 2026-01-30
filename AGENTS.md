@@ -12,6 +12,7 @@ This extension provides 4 specialized agents that complement Compound Engineerin
 - Just make the fix, don't ask permission for small changes
 - If something's unclear, make a reasonable assumption and note it
 - **After starting/restarting the dev server**, always smoke test: wait for ready, curl the homepage, then agent-browser open key pages affected by recent changes
+- Backpressure is required: tasks must define verification commands and (optionally) LLM subjective checks
 
 ---
 
@@ -287,6 +288,27 @@ By default, `./scripts/ralph.sh` routes tasks intelligently:
 - **Backend tasks** (core, engine, api, data, worker, db) → **Codex** (fast)
 - **Frontend tasks** (ui, components, design, css, styles) → **Claude Code** (nuanced)
 - **Heavy doc reviews** (PRD, UX, Plan) → **GPT-5.2 Pro** via `/oracle` command
+
+### Ralph Backpressure (UPDATED)
+
+**Every task must define verification/backpressure** (tests, typecheck, lint, etc).
+
+Task graph:
+- `verification`: required commands (array of strings)
+- `llmVerification`: optional subjective checks (array of strings)
+
+Beads:
+- Include sections in the bead description:
+  - `Verification:` (commands, one per line)
+  - `LLM Verification:` or `Subjective Checks:` (criteria, one per line)
+  - `Allowed Paths:` (optional)
+
+Repo-wide defaults (for non-Node projects):
+- `verification.txt` at repo root **or**
+- `RALPH_DEFAULT_VERIFY` env var **or**
+- `--default-verify "<cmds>"` flag
+
+**LLM-only verification is allowed** if no commands exist, but it still must pass.
 
 ### Skills (Within Claude Code)
 

@@ -56,12 +56,13 @@ See: https://github.com/Dicklesworthstone/destructive_command_guard
 
 ## Non-negotiables
 
-1. **Browser Oracle only**: Never use Oracle API mode. Always instruct the human to run CLI manually.
+1. **Browser Oracle only**: Never use Oracle API mode. If you can run the CLI locally, do it; otherwise instruct the human to run it.
 2. **Artifacts are truth**: The `artifacts/` directory is the source of truth. Update artifacts before touching code.
 3. **No evidence = not done**: Every task completion must include commands run + outputs or screenshots.
 4. **Task graph is truth**: Work is tracked via compiled task graph or beads with explicit dependencies.
 5. **Clean shutdown**: For swarms, use requestShutdown → approvals → cleanup.
 6. **ITERATE UNTIL CONVERGENCE**: Oracle reviews and self-reviews must run multiple times.
+7. **Backpressure required**: Tasks must include verification commands and/or LLM subjective checks. No verification = task fails unless explicitly allowed.
 
 ## CRITICAL: Iteration Requirements
 
@@ -281,7 +282,7 @@ The script will:
 - Write output to `artifacts/06-oracle/`
 - **Auto-resume** if interrupted (reads convergence-history.json)
 
-**DO NOT ask the user to run this.** Just run it. The script handles everything including browser automation, retries, and convergence checking.
+If you cannot run commands locally, instruct the human to run this. Otherwise, run it yourself.
 
 ---
 
@@ -335,6 +336,25 @@ node scripts/compile_task_graph.js
 # Execute
 ./scripts/ralph.sh 50
 ```
+
+### Option 3: strict_ralph.sh — Enforced Backpressure + Cross-Model Review
+
+```bash
+# Full loop (beads)
+./scripts/strict_ralph.sh --loop --beads --tool claude --review-tool codex
+
+# Full loop (task graph)
+./scripts/strict_ralph.sh --loop
+```
+
+**Backpressure rules (Ralph + strict_ralph):**
+- Tasks must define `verification` commands.
+- Optional `llmVerification` can be used for subjective checks.
+- Defaults for non-Node repos:
+  - `verification.txt` at repo root, or
+  - `RALPH_DEFAULT_VERIFY` env var, or
+  - `--default-verify "<cmds>"`.
+- LLM-only verification is allowed if no commands exist, but it must pass.
 
 ---
 
