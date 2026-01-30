@@ -103,6 +103,8 @@ Examples:
 Notes:
 - It auto-picks the next unblocked task from task graph or `br ready --json` if `--beads` is set.
 - It auto-commits after a clean review (use `--no-commit` to disable).
+- If `--no-commit` is set in loop mode, the script stops after one task so you can
+  review and commit manually before continuing.
 - It enforces test-file changes via filename patterns (tests/, *_test.go, _spec.rb, etc).
 - If your tests live inline in non-test files, use `--allow-no-tests` and explain why.
 - If using beads, make sure each bead description includes verification commands

@@ -55,7 +55,7 @@ Options:
   -h, --help               Show help
 
 Notes:
-- Requires a clean task definition in task-graph.json.
+- Requires a clean task definition in task-graph.json (unless using --beads).
 - Fails if no tests are added unless --allow-no-tests is set.
 - Fails if no verification commands are found unless --allow-no-verify is set.
 USAGE
@@ -174,7 +174,9 @@ select_next_task() {
     next=$(jq -r '
       def doneIds:
         [ .phases[].tasks[]
-          | select((.status // "pending") == "complete" or (.status // "pending") == "committed")
+          | select((.status // "pending") == "complete"
+                   or (.status // "pending") == "completed"
+                   or (.status // "pending") == "committed")
           | .id ];
       def isUnblocked($done):
         ((.status // "pending") == "pending")
@@ -627,12 +629,21 @@ main() {
       fi
       commit_task
       local ch
-      ch=$(git rev-parse HEAD 2>/dev/null || echo "")
-      update_task_status "$TASK_ID" "committed" "$ch"
-      log_progress "COMPLETE task $TASK_ID - $SUBJECT ($ch)"
-      append_summary "$TASK_ID" "$SUBJECT" "DONE" "$ch" "clean review"
+      if [[ "$AUTO_COMMIT" == "true" ]]; then
+        ch=$(git rev-parse HEAD 2>/dev/null || echo "")
+        update_task_status "$TASK_ID" "committed" "$ch"
+        log_progress "COMPLETE task $TASK_ID - $SUBJECT ($ch)"
+        append_summary "$TASK_ID" "$SUBJECT" "DONE" "$ch" "clean review"
+        require_clean_worktree
+      else
+        update_task_status "$TASK_ID" "complete"
+        log_progress "COMPLETE task $TASK_ID - $SUBJECT (no auto-commit)"
+        append_summary "$TASK_ID" "$SUBJECT" "DONE" "-" "clean review (manual commit)"
+        log "Auto-commit disabled. Commit your changes, then re-run to continue."
+        log_learning "Task $TASK_ID completed. Add learnings here if needed."
+        exit 0
+      fi
       log_learning "Task $TASK_ID completed. Add learnings here if needed."
-      require_clean_worktree
     done
     log "No more unblocked tasks found. Done."
     exit 0
