@@ -277,19 +277,19 @@ load_task() {
       local files
       acc=$(printf '%s\n' "$DESCRIPTION" | awk '
         BEGIN{found=0}
-        /^Acceptance Criteria:/ {found=1; next}
+        /^(Acceptance Criteria:|ACCEPTANCE:)/ {found=1; next}
         found && /^[A-Z][A-Za-z ]+:/ {exit}
         found {print}
       ')
       ver=$(printf '%s\n' "$DESCRIPTION" | awk '
         BEGIN{found=0}
-        /^Verification:/ {found=1; next}
+        /^(Verification:|VERIFICATION:)/ {found=1; next}
         found && /^[A-Z][A-Za-z ]+:/ {exit}
         found {print}
       ')
       files=$(printf '%s\n' "$DESCRIPTION" | awk '
         BEGIN{found=0}
-        /^Files to modify:/ {found=1; next}
+        /^(Files to modify:|ALLOWED PATHS:)/ {found=1; next}
         found && /^[A-Z][A-Za-z ]+:/ {exit}
         found {print}
       ')
@@ -538,13 +538,14 @@ run_task_loop() {
   local issues=""
   local iter
   local attempt=0
+  local phase="implement"
   for ((iter=1; iter<=MAX_ITERATIONS; iter++)); do
     attempt=$((attempt + 1))
     if [[ "$attempt" -gt "$MAX_TASK_ATTEMPTS" ]]; then
       log "Max attempts ($MAX_TASK_ATTEMPTS) exceeded for $TASK_ID"
       return 1
     fi
-    if [[ $iter -eq 1 ]]; then
+    if [[ "$phase" == "implement" ]]; then
       log "Iteration $iter: implementing"
       set +e
       run_with_tool "$TOOL" "$(build_prompt_impl)" >/tmp/strict_impl_$TASK_ID.log 2>&1
@@ -573,6 +574,7 @@ run_task_loop() {
     if ! run_verification; then
       log "Verification failed. Retrying."
       log_progress "Task $TASK_ID attempt $attempt failed verification"
+      phase="implement"
       continue
     fi
 
@@ -589,6 +591,7 @@ run_task_loop() {
     if [[ "$review_rc" -ne 0 ]]; then
       log "Review tool failed (rc=$review_rc). Retrying."
       log_progress "Task $TASK_ID attempt $attempt failed review"
+      phase="implement"
       continue
     fi
 
@@ -605,6 +608,7 @@ run_task_loop() {
     fi
 
     log "Issues found. Re-running implementer with fixes."
+    phase="fix"
   done
 
   fail "Exceeded max iterations ($MAX_ITERATIONS) without clean review."
