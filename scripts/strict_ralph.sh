@@ -535,6 +535,10 @@ require_test_changes() {
 
 run_verification() {
   if [[ -z "$VERIFY_CMDS" ]]; then
+    if [[ -n "$LLM_VERIFY" ]]; then
+      log "No verification commands provided. Using LLM verification only."
+      return 0
+    fi
     if [[ "$ALLOW_NO_VERIFY" == "true" ]]; then
       log "No verification commands provided. Skipping verification."
       return 0

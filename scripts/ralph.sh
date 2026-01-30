@@ -805,6 +805,8 @@ ensure_task_verification() {
   task_id=$(echo "$task_json" | jq -r '.id')
   local verification
   verification=$(get_task_verification "$task_json")
+  local llm_verification
+  llm_verification=$(get_task_llm_verification "$task_json")
 
   if [[ -z "$verification" ]]; then
     local default_verify
@@ -813,6 +815,8 @@ ensure_task_verification() {
       log_warn "Task $task_id missing verification. Using default verification."
       task_json=$(echo "$task_json" | jq --arg v "$default_verify" '.verification = ($v | split("\n") | map(select(length>0)))')
       verification="$default_verify"
+    elif [[ -n "$llm_verification" ]]; then
+      log_warn "Task $task_id has no verification commands; using LLM verification only."
     elif [[ "$ALLOW_NO_VERIFY" == "true" ]]; then
       log_warn "Task $task_id missing verification. Continuing due to --allow-no-verify."
       printf '%s\n' "$task_json"
@@ -2313,6 +2317,14 @@ generate_prompt() {
   if [[ -z "$verification" ]]; then
     verification="(not specified — add an appropriate verification step)"
   fi
+  local llm_verification
+  llm_verification=$(get_task_llm_verification "$task_json")
+  local llm_verification_block=""
+  if [[ -n "$llm_verification" ]]; then
+    local formatted_llm
+    formatted_llm=$(printf '%s\n' "$llm_verification" | sed 's/^/- /')
+    llm_verification_block=$(printf '\n## Subjective Verification (LLM)\n%s\n' "$formatted_llm")
+  fi
   local setup=$(echo "$task_json" | jq -r '.setup // ""')
   local tags=$(echo "$task_json" | jq -r '(.tags // []) | join(", ")')
 
@@ -2345,6 +2357,7 @@ $setup
 
 ## Verification / Acceptance Criteria
 - $verification
+$llm_verification_block
 
 $(if [[ -n "$recent_learnings" ]] || [[ -n "$recent_progress" ]]; then
 echo "## Context from This Build Session"
