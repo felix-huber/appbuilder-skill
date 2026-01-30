@@ -160,6 +160,10 @@ resolve_review_tool() {
   if [[ "$ALLOW_SAME_REVIEW_TOOL" != "true" && "$REVIEW_TOOL" == "$TOOL" ]]; then
     fail "Review tool must differ from implementation tool. Use --review-tool or --allow-same-review-tool."
   fi
+
+  if [[ "$REVIEW_TOOL" != "manual" ]]; then
+    require_cmd "$REVIEW_TOOL"
+  fi
 }
 
 update_loop_state() {

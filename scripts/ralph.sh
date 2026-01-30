@@ -467,6 +467,24 @@ check_prerequisites() {
       fi
       ;;
   esac
+
+  # Review tool availability (if reviews enabled)
+  if [[ "${FRESH_EYES:-false}" == "true" || "${COUNCIL_REVIEW:-false}" == "true" ]]; then
+    if [[ -n "$REVIEW_TOOL" ]]; then
+      if ! command -v "$REVIEW_TOOL" &> /dev/null; then
+        log_error "Review tool '$REVIEW_TOOL' not found in PATH."
+        exit 1
+      fi
+    else
+      if [[ "$ALLOW_SAME_REVIEW_TOOL" != "true" ]]; then
+        if [[ "$has_claude" != "true" || "$has_codex" != "true" ]]; then
+          log_error "Fresh-eyes review requires both Claude and Codex."
+          log_error "Install the missing tool(s) or use --review-tool <available> --allow-same-review-tool."
+          exit 1
+        fi
+      fi
+    fi
+  fi
   
   if ! command -v jq &> /dev/null; then
     log_error "jq not found. Install with: brew install jq (macOS) or apt install jq (Linux)"
