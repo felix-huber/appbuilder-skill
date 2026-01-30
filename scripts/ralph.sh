@@ -44,6 +44,7 @@ PROGRESS_FILE="$PROJECT_ROOT/progress.txt"
 LEARNINGS_FILE="$PROJECT_ROOT/learnings.md"
 LOGS_DIR="$PROJECT_ROOT/.beads/logs"
 CURRENT_TASK_ID=""  # Set during execution for logging
+SESSION_START_TS=0
 
 # Defaults
 MAX_ITERATIONS=20
@@ -550,6 +551,17 @@ check_prerequisites() {
   fi
 }
 
+format_duration() {
+  local total_seconds="$1"
+  if [[ "$total_seconds" -lt 0 ]]; then
+    total_seconds=0
+  fi
+  local hours=$((total_seconds / 3600))
+  local minutes=$(((total_seconds % 3600) / 60))
+  local seconds=$((total_seconds % 60))
+  printf "%02d:%02d:%02d" "$hours" "$minutes" "$seconds"
+}
+
 # Interactive task source selection
 select_task_source() {
   local has_beads=false
@@ -955,10 +967,15 @@ run_with_tool() {
   # Create log file for this task if we have a task ID
   if [[ -n "$CURRENT_TASK_ID" ]]; then
     log_file="$LOGS_DIR/${CURRENT_TASK_ID}.log"
-    echo "=== Task: $CURRENT_TASK_ID ===" > "$log_file"
-    echo "=== Tool: $tool ===" >> "$log_file"
-    echo "=== Started: $(date -Iseconds) ===" >> "$log_file"
-    echo "" >> "$log_file"
+    mkdir -p "$LOGS_DIR"
+    {
+      echo ""
+      echo "=== $(date -Iseconds) ==="
+      echo "tool: $tool"
+      echo "prompt:"
+      echo "$prompt"
+      echo "--- output ---"
+    } >> "$log_file"
     log_info "Logging to: $log_file"
     log_info "Watch with: tail -f $log_file"
   fi
@@ -2508,6 +2525,8 @@ print_status() {
   local total=0
   local pct=0
   local task_source="task-graph.json"
+  local eta="--"
+  local elapsed="--"
   
   if [[ "$USE_BEADS" == "true" ]]; then
     # For beads, total is sum of all statuses
@@ -2520,6 +2539,18 @@ print_status() {
   if [[ "$total" -gt 0 ]]; then
     pct=$((completed * 100 / total))
   fi
+
+  if [[ "$SESSION_START_TS" -gt 0 ]]; then
+    local now
+    now=$(date +%s)
+    local elapsed_seconds=$((now - SESSION_START_TS))
+    elapsed=$(format_duration "$elapsed_seconds")
+    if [[ "$completed" -gt 0 && "$total" -gt "$completed" ]]; then
+      local avg=$((elapsed_seconds / completed))
+      local remaining=$((total - completed))
+      eta=$(format_duration $((avg * remaining)))
+    fi
+  fi
   
   echo ""
   echo "╔════════════════════════════════════════════════════╗"
@@ -2528,6 +2559,7 @@ print_status() {
   printf "║  Completed:   %-5s   Pending:    %-5s            ║\n" "$completed" "$pending"
   printf "║  In Progress: %-5s   Failed:     %-5s            ║\n" "$in_progress" "$failed"
   printf "║  Total:       %-5s   Progress:   %3d%%             ║\n" "$total" "$pct"
+  printf "║  Elapsed:     %-8s ETA: %-15s ║\n" "$elapsed" "$eta"
   printf "║  Tool:        %-40s ║\n" "$TOOL"
   printf "║  Tasks:       %-40s ║\n" "$task_source"
   echo "╚════════════════════════════════════════════════════╝"
@@ -2539,6 +2571,7 @@ main() {
   parse_args "$@"
   check_prerequisites
   init_progress
+  SESSION_START_TS=$(date +%s)
 
   # Track session start for learning injection
   # We want ALL learnings from THIS session, not just last N
@@ -2701,8 +2734,7 @@ main() {
     OUTPUT=$(run_with_tool "$selected_tool" "$prompt")
     set -e
     
-    # Clear current task ID
-    CURRENT_TASK_ID=""
+    # Keep CURRENT_TASK_ID set through reviews for logging
     
     # Check for completion signal
     if echo "$OUTPUT" | grep -q "<promise>TASK_COMPLETE</promise>"; then
@@ -2758,6 +2790,7 @@ main() {
 
         # Skip reviews and auto-PR for failed tasks
         print_status
+        CURRENT_TASK_ID=""
         sleep 2
         continue
       fi
@@ -2815,6 +2848,7 @@ main() {
             echo "- Status: ❌ FAILED (post-review verification)"
           } >> "$PROGRESS_FILE"
           print_status
+          CURRENT_TASK_ID=""
           sleep 2
           continue
         fi
@@ -2836,6 +2870,7 @@ main() {
             echo "- Status: ❌ FAILED (LLM verification)"
           } >> "$PROGRESS_FILE"
           print_status
+          CURRENT_TASK_ID=""
           sleep 2
           continue
         fi
@@ -2866,6 +2901,9 @@ main() {
       if [[ "${AUTO_PR:-true}" == "true" ]]; then
         create_auto_pr "$task_id" "$subject"
       fi
+
+      # Clear current task ID after all agent activity
+      CURRENT_TASK_ID=""
       
     elif echo "$OUTPUT" | grep -q "<promise>TASK_BLOCKED</promise>"; then
       # Agent reported task is blocked (needs clarification, external dependency, etc.)
@@ -2885,6 +2923,7 @@ main() {
 
       log_warn "Task blocked. Agent needs clarification or external dependency."
       log_warn "Check agent output for what is needed to proceed."
+      CURRENT_TASK_ID=""
 
     elif echo "$OUTPUT" | grep -q "<promise>TASK_FAILED</promise>"; then
       mark_task_failed "$task_id"
@@ -2902,6 +2941,7 @@ main() {
       } >> "$PROGRESS_FILE"
 
       log_error "Task failed. See output above for details."
+      CURRENT_TASK_ID=""
       
     else
       # No clear signal - assume incomplete, retry next iteration
@@ -2925,6 +2965,7 @@ main() {
           .tasks = [.tasks[] | if .id == $id then .status = "pending" else . end]
         ' "$TASK_GRAPH" > "$tmp" && mv "$tmp" "$TASK_GRAPH"
       fi
+      CURRENT_TASK_ID=""
     fi
     
     print_status

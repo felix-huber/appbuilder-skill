@@ -24,7 +24,9 @@ PROGRESS_FILE=""
 LEARNINGS_FILE=""
 SUMMARY_FILE=""
 LOOP_STATE_FILE=""
+LOG_DIR=""
 RUN_ID=""
+SESSION_START_TS=0
 TASK_ID=""
 SUBJECT=""
 DESCRIPTION=""
@@ -139,9 +141,12 @@ init_run_files() {
   LEARNINGS_FILE="$PROJECT_ROOT/learnings.md"
   SUMMARY_FILE="$PROJECT_ROOT/artifacts/08-execution-summary.md"
   LOOP_STATE_FILE="$PROJECT_ROOT/artifacts/08-loop_state.json"
+  LOG_DIR="$PROJECT_ROOT/artifacts/strict-ralph-logs"
   RUN_ID=$(date -Iseconds)
+  SESSION_START_TS=$(date +%s)
 
   mkdir -p "$PROJECT_ROOT/artifacts"
+  mkdir -p "$LOG_DIR"
 
   if [[ ! -f "$SUMMARY_FILE" ]]; then
     cat <<EOF > "$SUMMARY_FILE"
@@ -153,6 +158,48 @@ Run Started: $RUN_ID
 |--------|---------|--------|--------|-------|
 EOF
   fi
+}
+
+format_duration() {
+  local total_seconds="$1"
+  if [[ "$total_seconds" -lt 0 ]]; then
+    total_seconds=0
+  fi
+  local hours=$((total_seconds / 3600))
+  local minutes=$(((total_seconds % 3600) / 60))
+  local seconds=$((total_seconds % 60))
+  printf "%02d:%02d:%02d" "$hours" "$minutes" "$seconds"
+}
+
+progress_counts() {
+  local completed=0
+  local total=0
+  if [[ "$USE_BEADS" == "true" ]]; then
+    completed=$(br list --status closed --json 2>/dev/null | jq 'length' 2>/dev/null || echo "0")
+    total=$(br list --json 2>/dev/null | jq 'length' 2>/dev/null || echo "0")
+  else
+    total=$(jq '[.phases[].tasks[]] | length' "$TASK_GRAPH" 2>/dev/null || echo "0")
+    completed=$(jq '[.phases[].tasks[] | select((.status // "pending") == "complete" or (.status // "pending") == "completed" or (.status // "pending") == "committed")] | length' "$TASK_GRAPH" 2>/dev/null || echo "0")
+  fi
+  echo "$completed $total"
+}
+
+log_eta() {
+  local completed total
+  read -r completed total <<<"$(progress_counts)"
+  if [[ -z "$total" || "$total" -le 0 ]]; then
+    return 0
+  fi
+  local percent=$((completed * 100 / total))
+  local elapsed=$(( $(date +%s) - SESSION_START_TS ))
+  local eta="--"
+  if [[ "$completed" -gt 0 && "$total" -gt "$completed" ]]; then
+    local avg=$((elapsed / completed))
+    local remaining=$((total - completed))
+    eta=$(format_duration $((avg * remaining)))
+  fi
+  log "Progress: $completed/$total (${percent}%) ETA $eta"
+  log_progress "ETA $eta ($completed/$total)"
 }
 
 resolve_review_tool() {
@@ -451,6 +498,7 @@ load_task() {
 run_with_tool() {
   local tool="$1"
   local prompt="$2"
+  local log_file="${3:-}"
   local timeout_cmd=""
 
   if command -v timeout >/dev/null 2>&1; then
@@ -459,21 +507,48 @@ run_with_tool() {
     timeout_cmd="gtimeout"
   fi
 
+  if [[ -n "$log_file" ]]; then
+    mkdir -p "$(dirname "$log_file")"
+    {
+      echo "=== $(date -Iseconds) ==="
+      echo "tool: $tool"
+      echo "prompt:"
+      echo "$prompt"
+      echo "--- output ---"
+    } >> "$log_file"
+  fi
+
   case "$tool" in
     claude)
       require_cmd claude
       if [[ -n "$timeout_cmd" ]]; then
-        "$timeout_cmd" "${STALL_MINUTES}m" claude -p --dangerously-skip-permissions "$prompt"
+        if [[ -n "$log_file" ]]; then
+          "$timeout_cmd" "${STALL_MINUTES}m" claude -p --dangerously-skip-permissions "$prompt" 2>&1 | tee -a "$log_file"
+        else
+          "$timeout_cmd" "${STALL_MINUTES}m" claude -p --dangerously-skip-permissions "$prompt"
+        fi
       else
-        claude -p --dangerously-skip-permissions "$prompt"
+        if [[ -n "$log_file" ]]; then
+          claude -p --dangerously-skip-permissions "$prompt" 2>&1 | tee -a "$log_file"
+        else
+          claude -p --dangerously-skip-permissions "$prompt"
+        fi
       fi
       ;;
     codex)
       require_cmd codex
       if [[ -n "$timeout_cmd" ]]; then
-        "$timeout_cmd" "${STALL_MINUTES}m" codex exec --yolo "$prompt"
+        if [[ -n "$log_file" ]]; then
+          "$timeout_cmd" "${STALL_MINUTES}m" codex exec --yolo "$prompt" 2>&1 | tee -a "$log_file"
+        else
+          "$timeout_cmd" "${STALL_MINUTES}m" codex exec --yolo "$prompt"
+        fi
       else
-        codex exec --yolo "$prompt"
+        if [[ -n "$log_file" ]]; then
+          codex exec --yolo "$prompt" 2>&1 | tee -a "$log_file"
+        else
+          codex exec --yolo "$prompt"
+        fi
       fi
       ;;
     manual)
@@ -488,6 +563,9 @@ run_with_tool() {
         fi
         out+="$line"$'\n'
       done
+      if [[ -n "$log_file" ]]; then
+        printf "%s" "$out" >> "$log_file"
+      fi
       printf "%s" "$out"
       ;;
     *)
@@ -720,7 +798,8 @@ run_task_loop() {
     if [[ "$phase" == "implement" ]]; then
       log "Iteration $iter: implementing"
       set +e
-      run_with_tool "$TOOL" "$(build_prompt_impl)" >/tmp/strict_impl_$TASK_ID.log 2>&1
+      local impl_log="$LOG_DIR/${TASK_ID}_attempt${attempt}_implement.log"
+      run_with_tool "$TOOL" "$(build_prompt_impl)" "$impl_log" >/dev/null
       local impl_rc=$?
       set -e
       if [[ "$impl_rc" -ne 0 ]]; then
@@ -732,7 +811,8 @@ run_task_loop() {
     else
       log "Iteration $iter: fixing issues"
       set +e
-      run_with_tool "$TOOL" "$(build_prompt_fix "$issues")" >/tmp/strict_fix_$TASK_ID.log 2>&1
+      local fix_log="$LOG_DIR/${TASK_ID}_attempt${attempt}_fix.log"
+      run_with_tool "$TOOL" "$(build_prompt_fix "$issues")" "$fix_log" >/dev/null
       local fix_rc=$?
       set -e
       if [[ "$fix_rc" -ne 0 ]]; then
@@ -770,7 +850,8 @@ run_task_loop() {
 
     local review_output
     set +e
-    review_output=$(run_with_tool "$REVIEW_TOOL" "$(build_prompt_review "$diff" "$files")")
+    local review_log="$LOG_DIR/${TASK_ID}_attempt${attempt}_review.log"
+    review_output=$(run_with_tool "$REVIEW_TOOL" "$(build_prompt_review "$diff" "$files")" "$review_log")
     local review_rc=$?
     set -e
     if [[ "$review_rc" -ne 0 ]]; then
@@ -816,6 +897,7 @@ main() {
       log "Next task: $TASK_ID - $SUBJECT"
       update_loop_state "starting" "implement" 0 "task selected"
       log_progress "START task $TASK_ID - $SUBJECT"
+      log_eta
       update_task_status "$TASK_ID" "running"
       if ! run_task_loop; then
         update_task_status "$TASK_ID" "error"
@@ -830,6 +912,7 @@ main() {
         log_progress "COMPLETE task $TASK_ID - $SUBJECT ($ch)"
         append_summary "$TASK_ID" "$SUBJECT" "DONE" "$ch" "clean review"
         require_clean_worktree
+        log_eta
       else
         update_task_status "$TASK_ID" "complete"
         log_progress "COMPLETE task $TASK_ID - $SUBJECT (no auto-commit)"
