@@ -39,10 +39,6 @@ Look for:
 - Premature optimization
 - Over-engineered solutions for simple problems
 
-## Optional Safety: DCG
-Install Destructive Command Guard to block unsafe git/FS commands:
-https://github.com/Dicklesworthstone/destructive_command_guard
-
 ## Non-negotiables
 
 1. **Browser Oracle only**: Never use Oracle API mode. If you can run the CLI locally, do it; otherwise instruct the human to run it.
@@ -65,51 +61,6 @@ Based on the Doodlestein methodology, **planning tokens are 100x cheaper than fi
 | Any self-review | Until stable (no changes) |
 
 **DO NOT SKIP ITERATIONS.** See `skills/phase-transitions/SKILL.md` for detailed prompts.
-
----
-
-## Search Tools (Quick)
-- Use `rg` for fast text search.
-- Use `ast-grep` for structural refactors.
-
----
-
-## UBS (Quick)
-- Run `ubs --diff .` before commits; exit 0 = safe.
-
----
-
-## Beads Workflow Integration
-
-When starting a beads-tracked task:
-
-1. **Pick ready work (Beads)**
-   ```bash
-   br ready --json  # Choose highest priority, no blockers
-   ```
-
-2. **Announce start**
-   ```bash
-   br update <id> --status in_progress
-   ```
-
-3. **Work and update**
-   - If you discover new work, create a new bead with `--deps discovered-from:<parent-id>`
-
-4. **Complete and release**
-   ```bash
-   br close <id> --reason "Completed"
-   ```
-
-5. **If using beads, keep state updated (this repo ignores `.beads/`)**
-
-**Mapping cheat-sheet:**
-- Thread ID / commit messages: `br-###` for traceability
-- File reservation reason: `br-###`
-
-**Key invariants (when using beads):**
-- `.beads/` is authoritative state in beads-tracked projects
-- Do not edit `.beads/*.jsonl` directly; only via `br`
 
 ---
 
@@ -158,28 +109,6 @@ The script will:
 - **Auto-resume** if interrupted (reads convergence-history.json)
 
 If you cannot run commands locally, instruct the human to run this. Otherwise, run it yourself.
-
----
-
-## Artifact Chain
-
-```
-00-brief.md        → /brief
-01-prd.md          → /prd
-06-oracle/prd/*    → /oracle prd (iterate until converged)
-02-ux.md           → /ux
-06-oracle/ux/*     → /oracle ux (iterate until converged)
-05-design/*        → /ui (optional)
-03-plan.md         → /plan (with sprints!)
-06-oracle/plan/*   → /oracle plan (iterate until converged)
-04-task-graph.json → /artifact-tasks
-04-beads-setup.sh  → (optional) beads creation script
-[implementation]   → ./scripts/ralph.sh [--beads]
-06-oracle/code/*   → /oracle code (iterate until converged)
-07-verification.md → /gates
-08-release.md      → /ship
-09-retro.md        → /retro
-```
 
 ---
 
@@ -256,51 +185,3 @@ node scripts/compile_task_graph.js
 - Healer: fixes issues found; re-run verification after fixes
 
 ---
-
-## Commands from This Extension
-
-| Command | Purpose |
-|---------|---------|
-| `/brief` | Create problem brief (artifact 00) |
-| `/prd` | Generate PRD (artifact 01) |
-| `/ux` | Generate UX spec (artifact 02) |
-| `/ui` | UI exploration: tasteboard + keystone + variants |
-| `/plan` | Generate implementation plan with SPRINTS (artifact 03) |
-| `/oracle <kind>` | Run GPT-5.2 Pro review (prd/ux/plan/code) — iterate! |
-| `/artifact-tasks` | Compile task graph from plan + issues |
-| `/sprint` | Break spec into atomic sprint tasks |
-| `/ralph` | Run autonomous execution loop |
-| `/review <type>` | Run iterative review loops |
-| `/swarm-status` | Report swarm health |
-| `/gates` | Run verification checks |
-| `/ship` | Create release plan |
-| `/retro` | Capture learnings |
-| `/combined-lfg` | Full integrated workflow |
-
----
-
-## Skills from This Extension
-
-| Skill | Purpose |
-|-------|---------|
-| `oracle-integration` | Oracle CLI wrapper and issue normalization |
-| `artifact-workflow` | Artifact chain management and phase detection |
-| `phase-transitions` | Transformation prompts between phases |
-| `ui-exploration` | Tasteboard, keystone, variants workflow |
-| `review-loops` | Iteration methodology |
-| `parallel-execution` | Dependency rules, self-healing, status tracking |
-| `frontend-design` | ASCII wireframes, oklch colors, animations |
-| `agent-browser` | Browser automation patterns |
-
----
-
-## Where Things Live
-
-- Commands: `.claude/commands/`
-- Skills: `skills/`
-- Scripts: `scripts/`
-- Prompts: `prompts/{prd,ux,plan,code,sprint,review,ralph}/`
-- Templates: `templates/`
-- Tools: `tools/` (tasteboard, design-gallery, task-board)
-- Artifacts: `artifacts/` (generated during workflow)
-- Docs: `docs/` (schema documentation, patterns)
