@@ -12,7 +12,7 @@ This extension provides 4 specialized agents that complement Compound Engineerin
 - Just make the fix, don't ask permission for small changes
 - If something's unclear, make a reasonable assumption and note it
 - **After starting/restarting the dev server**, always smoke test: wait for ready, curl the homepage, then agent-browser open key pages affected by recent changes
-- Backpressure is required: tasks must define verification commands and (optionally) LLM subjective checks
+- Backpressure is required: tasks must define verification commands and/or LLM subjective checks
 
 ---
 
@@ -43,42 +43,10 @@ git log --oneline -5    # See recent commits
 
 **Re-read any files you plan to modify.** This prevents overwriting another agent's work.
 
-### Using Skills in Codex
-
-This extension's skills work in both Claude Code and Codex (same SKILL.md format).
-
-**One-time setup:**
-```bash
-./scripts/setup_codex_skills.sh   # Creates symlinks in .codex/skills/
-```
-
-**Start Codex with skills:**
-```bash
-codex --enable skills
-```
-
-**Invoke skills with `$` prefix:**
-```
-$oracle-integration     # Run Oracle review
-$artifact-workflow      # Artifact chain management
-$frontend-design        # UI work
-```
-
-**Or just describe what you want** — Codex will use skills automatically:
-```
-Run the Oracle convergence loop for UX
-Create a PRD from the brief
-```
-
-**Command equivalents:**
-
-| Claude Code | Codex | Alternative |
-|-------------|-------|-------------|
-| `/oracle ux` | `$oracle-integration` | `./scripts/oracle_converge.sh ux ...` |
-| `/prd` | `$artifact-workflow` | Describe: "create PRD from brief" |
-| `/ralph` | — | `./scripts/ralph.sh` (scripts work directly) |
-
-All shell scripts (`./scripts/*.sh`) work in both environments without modification.
+### Skills (Short)
+- Skills live in `skills/` and work in both Claude Code and Codex.
+- Codex setup (once): `./scripts/setup_codex_skills.sh`, then run `codex --enable skills`.
+- Invoke skills with `$skill-name` or describe what you want.
 
 ### ⚠️ Check Existing Oracle State FIRST
 
@@ -97,34 +65,9 @@ cat artifacts/06-oracle/<kind>/convergence-history.json 2>/dev/null
 | No Oracle output | Run Oracle |
 
 ### Long-Running Oracle Processes (CRITICAL for Codex)
-
-Oracle CLI commands take **60-90 minutes** to complete. This is normal.
-
-**DO NOT:**
-- ❌ Interrupt or timeout Oracle processes
-- ❌ Assume "no output" means stuck
-- ❌ Kill processes after 5-10 minutes
-
-**DO:**
-- ✅ Wait patiently (GPT-5.2 Pro "thinking" takes 30+ minutes)
-- ✅ Monitor with: `pgrep -fl oracle`
-- ✅ Watch logs: `tail -f artifacts/06-oracle/*/oracle-*.log`
-- ✅ Check for new files: `ls -la artifacts/06-oracle/ux/`
-
-**Expected timeline:**
-1. Script starts → immediate output
-2. Browser opens → GPT-5.2 Pro starts
-3. **30-60 minutes of silence** → extended thinking
-4. Response streams → output file created
-5. Script reports results
-
-After Oracle completes, apply feedback from the newest `*_product.md` file.
-
-**Codex config for long runs** (add to `~/.codex/config.toml`):
-```toml
-[model_providers.openai]
-stream_idle_timeout_ms = 7200000  # 2 hours
-```
+- Oracle CLI can take 60–90 minutes. Do **not** interrupt.
+- Monitor: `pgrep -fl oracle`, `tail -f artifacts/06-oracle/*/oracle-*.log`
+- Apply feedback from newest `*_product.md` after completion.
 
 ---
 

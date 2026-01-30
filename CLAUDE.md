@@ -39,20 +39,9 @@ Look for:
 - Premature optimization
 - Over-engineered solutions for simple problems
 
-## Recommended: Install DCG for Safety
-
-Prevents agents from running destructive git/filesystem commands:
-
-```bash
-curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/destructive_command_guard/master/install.sh?$(date +%s)" | bash
-```
-
-This auto-configures Claude Code, Codex, Gemini, Cursor, and Aider to block:
-- `git reset --hard`, `git clean -f`, `git push --force`
-- `rm -rf` outside temp directories
-- Other destructive patterns
-
-See: https://github.com/Dicklesworthstone/destructive_command_guard
+## Optional Safety: DCG
+Install Destructive Command Guard to block unsafe git/FS commands:
+https://github.com/Dicklesworthstone/destructive_command_guard
 
 ## Non-negotiables
 
@@ -79,83 +68,14 @@ Based on the Doodlestein methodology, **planning tokens are 100x cheaper than fi
 
 ---
 
-## ast-grep vs ripgrep (Quick Guidance)
-
-**Use ast-grep when structure matters.** It parses code and matches AST nodes, so results ignore comments/strings, understand syntax, and can safely rewrite code.
-
-| When | Tool |
-|------|------|
-| Refactors/codemods (rename APIs, change imports) | ast-grep |
-| Policy checks (enforce patterns across repo) | ast-grep |
-| "How is X implemented?" | ast-grep or warp_grep |
-
-**Use ripgrep when text is enough.** It's the fastest way to grep literals/regex across files.
-
-| When | Tool |
-|------|------|
-| Find strings, TODOs, log lines, config values | rg |
-| Pre-filter before precise pass | rg |
-| Non-code assets | rg |
-
-**Rule of thumb:**
-- Need correctness or you'll apply changes → start with ast-grep
-- Need raw speed or just hunting text → start with rg
-- Often combine: `rg` to shortlist files, then `ast-grep` to match/modify with precision
-
-**Snippets:**
-```bash
-# Find structured code (ignores comments/strings)
-ast-grep run -l Python -p 'def $NAME($PARAMS): $$$BODY'
-
-# Find all async function definitions
-ast-grep run -l Python -p 'async def $NAME($PARAMS): $$$BODY'
-
-# Quick textual hunt
-rg -n 'def .*research' -t py
-
-# Combine speed + precision
-rg -l -t py 'pandas' | xargs ast-grep run -l Python -p 'import pandas as $ALIAS' --json
-```
+## Search Tools (Quick)
+- Use `rg` for fast text search.
+- Use `ast-grep` for structural refactors.
 
 ---
 
-## UBS Quick Reference (Ultimate Bug Scanner)
-
-**Golden Rule:** `ubs --diff .` (or `ubs --staged`) before every commit. Exit 0 = safe. Exit >0 = fix & re-run.
-
-**Commands:**
-```bash
-ubs --diff --only=js,python .    # Modified files (working tree vs HEAD) — USE THIS
-ubs --staged --only=js,python .  # Staged files — before commit
-ubs --ci --fail-on-warning --diff .  # CI mode for the diff — before PR
-ubs .                             # Whole project (slow, use sparingly)
-```
-
-**Output Format:**
-```
-⚠️ Category (N errors)
-file.ts:42:5 – Issue description
-💡 Suggested fix
-Exit code: 1
-```
-
-**Fix Workflow:**
-1. Read finding → category + fix suggestion
-2. Navigate `file:line:col` → view context
-3. Verify real issue (not false positive)
-4. Fix root cause (not symptom)
-5. Re-run `ubs <file>` → exit 0
-6. Commit
-
-**Bug Severity:**
-- **Critical (always fix):** Null safety, XSS/injection, async/await, memory leaks
-- **Important (production):** Type narrowing, division-by-zero, resource leaks
-- **Contextual (judgment):** TODO/FIXME, console logs
-
-**Anti-Patterns:**
-- ❌ Ignore findings → ✅ Investigate each
-- ❌ Full scan per edit → ✅ Scope to file
-- ❌ Fix symptom (`if (x) { x.y }`) → ✅ Root cause (`x?.y`)
+## UBS (Quick)
+- Run `ubs --diff .` before commits; exit 0 = safe.
 
 ---
 
