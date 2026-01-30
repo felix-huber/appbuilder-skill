@@ -2434,7 +2434,8 @@ fi)
 2. Implement the task following the description
 3. Run the verification commands to confirm success
 4. **MANDATORY: Run task verification and build verification** (see below)
-5. If all verifications pass, output <promise>TASK_COMPLETE</promise>
+5. **MANDATORY: Self-review with fresh eyes** - re-read your code, fix any issues (see below)
+6. If all verifications pass, output <promise>TASK_COMPLETE</promise>
    (Do NOT commit or push - Ralph handles branching/commits/PRs)
 
 ## Critical Rules
@@ -2492,6 +2493,20 @@ Common issues to watch for:
 
 The orchestrator will verify the build after you report completion.
 If the build fails, your task will be marked as FAILED even if you said TASK_COMPLETE.
+
+## 👀 SELF-REVIEW WITH FRESH EYES (MANDATORY)
+
+Before outputting TASK_COMPLETE, you MUST review your own code with "fresh eyes":
+
+1. **Re-read all code you wrote or modified** - look at it as if seeing it for the first time
+2. **Check for obvious bugs** - off-by-one errors, null checks, edge cases
+3. **Check for logic errors** - does the code actually do what it's supposed to?
+4. **Check for missing error handling** - what happens when things fail?
+5. **Check for inconsistencies** - naming, patterns, style matching existing code
+6. **Fix anything you find** - don't just note it, actually fix it
+
+This self-review is cheap (same context) and catches many issues before the expensive
+external review. Take 30 seconds to genuinely re-examine your work.
 
 ## Learnings (Optional)
 
