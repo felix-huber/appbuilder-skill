@@ -8,6 +8,8 @@ TASK_GRAPH="$PROJECT_ROOT/artifacts/04-task-graph.json"
 TOOL="claude"
 REVIEW_TOOL="claude"
 MAX_ITERATIONS=3
+MAX_TASK_ATTEMPTS=3
+STALL_MINUTES=45
 ALLOW_NO_TESTS="false"
 ALLOW_NO_VERIFY="false"
 LOOP_MODE="false"
@@ -15,6 +17,10 @@ USE_BEADS="false"
 AUTO_COMMIT="true"
 AUTO_PUSH="false"
 COMMIT_PREFIX="feat"
+PROGRESS_FILE=""
+LEARNINGS_FILE=""
+SUMMARY_FILE=""
+RUN_ID=""
 TASK_ID=""
 SUBJECT=""
 DESCRIPTION=""
@@ -37,6 +43,8 @@ Options:
   --review-tool <claude|codex|manual> Tool for review (default: claude)
   --verification <cmds>    Semicolon-separated verification commands
   --max-iterations <n>     Max review loops (default: 3)
+  --max-attempts <n>        Max attempts per task (default: 3)
+  --stall-minutes <n>       Max minutes per tool run if timeout is available (default: 45)
   --allow-no-tests         Allow tasks with no test changes
   --allow-no-verify        Allow tasks with no verification commands
   --loop                   Auto-pick next unblocked task until done
@@ -71,6 +79,10 @@ parse_args() {
         VERIFY_CMDS="$2"; shift 2 ;;
       --max-iterations)
         MAX_ITERATIONS="$2"; shift 2 ;;
+      --max-attempts)
+        MAX_TASK_ATTEMPTS="$2"; shift 2 ;;
+      --stall-minutes)
+        STALL_MINUTES="$2"; shift 2 ;;
       --allow-no-tests)
         ALLOW_NO_TESTS="true"; shift ;;
       --allow-no-verify)
@@ -95,6 +107,45 @@ parse_args() {
 
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "Missing required command: $1"
+}
+
+init_run_files() {
+  PROGRESS_FILE="$PROJECT_ROOT/progress.txt"
+  LEARNINGS_FILE="$PROJECT_ROOT/learnings.md"
+  SUMMARY_FILE="$PROJECT_ROOT/artifacts/08-execution-summary.md"
+  RUN_ID=$(date -Iseconds)
+
+  mkdir -p "$PROJECT_ROOT/artifacts"
+
+  if [[ ! -f "$SUMMARY_FILE" ]]; then
+    cat <<EOF > "$SUMMARY_FILE"
+# Execution Summary (strict_ralph)
+
+Run Started: $RUN_ID
+
+| Task ID | Subject | Status | Commit | Notes |
+|--------|---------|--------|--------|-------|
+EOF
+  fi
+}
+
+log_progress() {
+  local msg="$1"
+  printf '%s %s\n' "$(date -Iseconds)" "$msg" >> "$PROGRESS_FILE"
+}
+
+log_learning() {
+  local msg="$1"
+  printf '## %s\n- %s\n\n' "$(date -Iseconds)" "$msg" >> "$LEARNINGS_FILE"
+}
+
+append_summary() {
+  local id="$1"
+  local subject="$2"
+  local status="$3"
+  local commit="$4"
+  local notes="$5"
+  printf '| %s | %s | %s | %s | %s |\n' "$id" "$subject" "$status" "$commit" "$notes" >> "$SUMMARY_FILE"
 }
 
 require_beads() {
@@ -218,6 +269,38 @@ load_task() {
     if [[ -z "$VERIFY_CMDS" ]]; then
       VERIFY_CMDS=""
     fi
+    if [[ -n "$DESCRIPTION" ]]; then
+      local acc
+      local ver
+      local files
+      acc=$(printf '%s\n' "$DESCRIPTION" | awk '
+        BEGIN{found=0}
+        /^Acceptance Criteria:/ {found=1; next}
+        found && /^[A-Z][A-Za-z ]+:/ {exit}
+        found {print}
+      ')
+      ver=$(printf '%s\n' "$DESCRIPTION" | awk '
+        BEGIN{found=0}
+        /^Verification:/ {found=1; next}
+        found && /^[A-Z][A-Za-z ]+:/ {exit}
+        found {print}
+      ')
+      files=$(printf '%s\n' "$DESCRIPTION" | awk '
+        BEGIN{found=0}
+        /^Files to modify:/ {found=1; next}
+        found && /^[A-Z][A-Za-z ]+:/ {exit}
+        found {print}
+      ')
+      if [[ -n "$acc" ]]; then
+        ACCEPTANCE=$(printf '%s\n' "$acc" | sed -e 's/^[ -]*//')
+      fi
+      if [[ -n "$ver" && -z "$VERIFY_CMDS" ]]; then
+        VERIFY_CMDS=$(printf '%s\n' "$ver" | sed -e 's/^[ -]*//' | paste -sd ';' -)
+      fi
+      if [[ -n "$files" ]]; then
+        FILES_HINT=$(printf '%s\n' "$files" | sed -e 's/^[ -]*//' | paste -sd ', ' -)
+      fi
+    fi
   else
     if [[ ! -f "$TASK_GRAPH" ]]; then
       fail "Task graph not found at $TASK_GRAPH"
@@ -246,15 +329,30 @@ load_task() {
 run_with_tool() {
   local tool="$1"
   local prompt="$2"
+  local timeout_cmd=""
+
+  if command -v timeout >/dev/null 2>&1; then
+    timeout_cmd="timeout"
+  elif command -v gtimeout >/dev/null 2>&1; then
+    timeout_cmd="gtimeout"
+  fi
 
   case "$tool" in
     claude)
       require_cmd claude
-      claude -p --dangerously-skip-permissions "$prompt"
+      if [[ -n "$timeout_cmd" ]]; then
+        "$timeout_cmd" "${STALL_MINUTES}m" claude -p --dangerously-skip-permissions "$prompt"
+      else
+        claude -p --dangerously-skip-permissions "$prompt"
+      fi
       ;;
     codex)
       require_cmd codex
-      codex exec --yolo "$prompt"
+      if [[ -n "$timeout_cmd" ]]; then
+        "$timeout_cmd" "${STALL_MINUTES}m" codex exec --yolo "$prompt"
+      else
+        codex exec --yolo "$prompt"
+      fi
       ;;
     manual)
       echo "----- PROMPT START -----"
@@ -337,13 +435,17 @@ run_verification() {
       continue
     fi
     log "Running verification: $cmd"
-    (cd "$PROJECT_ROOT" && bash -lc "$cmd")
+    if ! (cd "$PROJECT_ROOT" && bash -lc "$cmd"); then
+      return 1
+    fi
   done
+  return 0
 }
 
 build_prompt_impl() {
   cat <<EOF
-You are implementing task $TASK_ID: $SUBJECT
+You are implementing task $TASK_ID: $SUBJECT.
+This is a fresh CLI session; do not assume any prior context.
 
 Files to modify:
 $FILES_HINT
@@ -369,6 +471,13 @@ build_prompt_review() {
   local files="$2"
 
   cat <<EOF
+Ok can you now turn your attention to reviewing the code written by
+your fellow agents and checking for any issues, bugs, errors, problems,
+inefficiencies, security problems, reliability issues, etc. and carefully
+diagnose their underlying root causes using first-principle analysis.
+
+This is a fresh CLI session; do not assume any prior context.
+
 You are a strict code reviewer for task $TASK_ID: $SUBJECT.
 
 Acceptance Criteria:
@@ -426,18 +535,44 @@ commit_task() {
 run_task_loop() {
   local issues=""
   local iter
+  local attempt=0
   for ((iter=1; iter<=MAX_ITERATIONS; iter++)); do
+    attempt=$((attempt + 1))
+    if [[ "$attempt" -gt "$MAX_TASK_ATTEMPTS" ]]; then
+      log "Max attempts ($MAX_TASK_ATTEMPTS) exceeded for $TASK_ID"
+      return 1
+    fi
     if [[ $iter -eq 1 ]]; then
       log "Iteration $iter: implementing"
+      set +e
       run_with_tool "$TOOL" "$(build_prompt_impl)" >/tmp/strict_impl_$TASK_ID.log 2>&1
+      local impl_rc=$?
+      set -e
+      if [[ "$impl_rc" -ne 0 ]]; then
+        log "Implementation tool failed (rc=$impl_rc)."
+        log_progress "Task $TASK_ID attempt $attempt failed during implementation"
+        continue
+      fi
     else
       log "Iteration $iter: fixing issues"
+      set +e
       run_with_tool "$TOOL" "$(build_prompt_fix "$issues")" >/tmp/strict_fix_$TASK_ID.log 2>&1
+      local fix_rc=$?
+      set -e
+      if [[ "$fix_rc" -ne 0 ]]; then
+        log "Fix tool failed (rc=$fix_rc)."
+        log_progress "Task $TASK_ID attempt $attempt failed during fix"
+        continue
+      fi
     fi
 
     require_changes
     require_test_changes
-    run_verification
+    if ! run_verification; then
+      log "Verification failed. Retrying."
+      log_progress "Task $TASK_ID attempt $attempt failed verification"
+      continue
+    fi
 
     local diff
     diff=$(collect_diff)
@@ -445,7 +580,15 @@ run_task_loop() {
     files=$(changed_files)
 
     local review_output
+    set +e
     review_output=$(run_with_tool "$REVIEW_TOOL" "$(build_prompt_review "$diff" "$files")")
+    local review_rc=$?
+    set -e
+    if [[ "$review_rc" -ne 0 ]]; then
+      log "Review tool failed (rc=$review_rc). Retrying."
+      log_progress "Task $TASK_ID attempt $attempt failed review"
+      continue
+    fi
 
     if echo "$review_output" | grep -qx "NO_ISSUES_FOUND"; then
       log "Review clean. Task complete."
@@ -467,6 +610,7 @@ run_task_loop() {
 
 main() {
   parse_args "$@"
+  init_run_files
 
   if [[ "$LOOP_MODE" == "true" ]]; then
     require_clean_worktree
@@ -474,15 +618,20 @@ main() {
       VERIFY_CMDS=""
       load_task
       log "Next task: $TASK_ID - $SUBJECT"
+      log_progress "START task $TASK_ID - $SUBJECT"
       update_task_status "$TASK_ID" "running"
       if ! run_task_loop; then
         update_task_status "$TASK_ID" "error"
+        append_summary "$TASK_ID" "$SUBJECT" "FAILED" "-" "review/verification failure"
         fail "Task $TASK_ID failed review."
       fi
       commit_task
       local ch
       ch=$(git rev-parse HEAD 2>/dev/null || echo "")
       update_task_status "$TASK_ID" "committed" "$ch"
+      log_progress "COMPLETE task $TASK_ID - $SUBJECT ($ch)"
+      append_summary "$TASK_ID" "$SUBJECT" "DONE" "$ch" "clean review"
+      log_learning "Task $TASK_ID completed. Add learnings here if needed."
       require_clean_worktree
     done
     log "No more unblocked tasks found. Done."
@@ -491,7 +640,9 @@ main() {
 
   load_task
   log "Task: $TASK_ID - $SUBJECT"
+  log_progress "START task $TASK_ID - $SUBJECT"
   run_task_loop
+  log_progress "COMPLETE task $TASK_ID - $SUBJECT (no auto-commit)"
   exit 0
 }
 

@@ -107,3 +107,6 @@ Notes:
 - If your tests live inline in non-test files, use `--allow-no-tests` and explain why.
 - If using beads, make sure each bead description includes verification commands
   or pass `--allow-no-verify`.
+- It logs progress to `progress.txt`, writes a lightweight execution summary to
+  `artifacts/08-execution-summary.md`, and appends a learnings stub to `learnings.md`.
+- Each tool invocation is a fresh CLI session; no shared context is assumed.
