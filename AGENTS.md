@@ -310,6 +310,29 @@ Repo-wide defaults (for non-Node projects):
 
 **LLM-only verification is allowed** if no commands exist, but it still must pass.
 
+### Ralph Agent Roles (What Each Agent Should Do)
+
+**Implementer (Claude/Codex)**
+- Read task, allowed paths, verification, and LLM checks.
+- Implement ONE task; add/modify tests as required.
+- Run task verification + build verification before claiming completion.
+- Do not commit; Ralph handles commits/PRs.
+
+**Reviewer (Claude/Codex, cross-model by default)**
+- Use fresh context.
+- Output `NO_ISSUES_FOUND` exactly or list `[P1|P2|P3]` issues with file/line.
+- Focus on correctness, edge cases, regressions, and test quality.
+
+**LLM Judge (subjective checks)**
+- Binary: `LLM_PASS` or `LLM_FAIL` with 1-line reason.
+- Uses diff and changed files only; if unverified, fail.
+
+**Council Roles**
+- Analyst: correctness, architecture, performance risks.
+- Sentinel: anti-patterns, security, "test cheating".
+- Designer: UI/UX quality, accessibility, visual hierarchy.
+- Healer: fix issues found by other roles; re-run verification after fixes.
+
 ### Skills (Within Claude Code)
 
 Claude Code uses skills from `skills/` directory:

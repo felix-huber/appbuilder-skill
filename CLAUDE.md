@@ -358,6 +358,30 @@ node scripts/compile_task_graph.js
 
 ---
 
+## Ralph Agent Roles (Behavior Expectations)
+
+**Implementer**
+- Reads task, allowed paths, verification, and LLM checks.
+- Implements ONE task; adds required tests.
+- Runs task verification + build verification before claiming completion.
+- Does NOT commit; Ralph handles commits/PRs.
+
+**Reviewer**
+- Fresh context; output `NO_ISSUES_FOUND` or `[P1|P2|P3]` issues with file:line.
+- Prioritize correctness, regressions, and test quality.
+
+**LLM Judge (Subjective)**
+- Output `LLM_PASS` or `LLM_FAIL` with 1-line reason.
+- Fail if criteria cannot be verified from diff/changes.
+
+**Council Subagents**
+- Analyst: correctness/architecture/perf risks
+- Sentinel: anti-patterns, security, test cheating
+- Designer: UI/UX polish, accessibility, hierarchy
+- Healer: fixes issues found; re-run verification after fixes
+
+---
+
 ## Tool Routing (Doodlestein Methodology)
 
 **Ralph uses smart routing by default:**
