@@ -73,8 +73,10 @@ Determine if this is a testable task by checking tags:
 6. Keep work **atomic and committable**
 7. For each file: read first, edit carefully, preserve formatting
 8. Run verification commands
-9. If pass, commit with message: `feat({{task_id}}): {{subject}}`
-10. Append learnings to `progress.txt`
+9. **MANDATORY: Self-review with fresh eyes** (see below)
+10. If all verifications pass, output `<promise>TASK_COMPLETE</promise>`
+    (Do NOT commit or push - Ralph handles branching/commits/PRs)
+11. Append learnings to `progress.txt`
 
 ## Critical Rules
 
@@ -91,6 +93,20 @@ If you encounter an error:
 2. Check if it's a missing dependency (install it)
 3. Check if it's a type error (fix the types)
 4. If stuck for >5 minutes, document the blocker and output: `<promise>TASK_BLOCKED</promise>`
+
+## 👀 Self-Review With Fresh Eyes (MANDATORY)
+
+Before outputting TASK_COMPLETE, you MUST review your own code with "fresh eyes":
+
+1. **Re-read all code you wrote or modified** - look at it as if seeing it for the first time
+2. **Check for obvious bugs** - off-by-one errors, null checks, edge cases
+3. **Check for logic errors** - does the code actually do what it's supposed to?
+4. **Check for missing error handling** - what happens when things fail?
+5. **Check for inconsistencies** - naming, patterns, style matching existing code
+6. **Fix anything you find** - don't just note it, actually fix it
+
+This self-review is cheap (same context) and catches many issues before the expensive
+external review. Take 30 seconds to genuinely re-examine your work.
 
 ## When Complete
 
