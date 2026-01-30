@@ -33,6 +33,28 @@ Choose one:
 - Beads: run `/sprint` or create beads manually
 - Task graph: generate `artifacts/04-task-graph.json`
 
+## Skills to Use (inside Claude Code)
+Use these skills inside Claude Code as you work through the phases:
+- `$prd` for PRD generation from the brief
+- `$artifact-workflow` for the artifact chain (PRD -> UX -> Plan)
+- `$review-loops` for Doodlestein review prompts (plan/beads/code)
+- `$oracle-integration` for Oracle reviews (long-running, use only when needed)
+- `$agent-browser` for E2E user journeys and screenshots
+- `$frontend-design` and `$frontend-responsive` for UI work
+- `$context7` when using external libraries or SDKs
+- `$llm-council` (optional) for robust multi-agent planning
+
+When doing code review loops, explicitly ask for a fresh instance and
+use the review-loops prompts to keep iterations strict.
+
+## Commands to Run Manually (outside Claude Code)
+Run these in your shell (not inside Claude):
+- Beads setup: `br init`, `br ready`, `br list`, `br show`, `br close`, `br update`
+- Strict loop: `./scripts/strict_ralph.sh --loop --beads --tool claude --review-tool claude`
+- Gates: `./scripts/gate_pack.sh`
+- E2E: `./scripts/run_e2e_happy_paths.sh` (if present)
+- Oracle (optional): `./scripts/oracle_converge.sh <lens> ...` after checking state
+
 ## Phase 3: Strict Task Execution (per task)
 Use a fresh Claude instance for each task.
 
