@@ -94,19 +94,22 @@ If you encounter an error:
 3. Check if it's a type error (fix the types)
 4. If stuck for >5 minutes, document the blocker and output: `<promise>TASK_BLOCKED</promise>`
 
-## 👀 Self-Review With Fresh Eyes (MANDATORY)
+## 👀 Self-Review With Fresh Eyes (MANDATORY - 4 PASSES)
 
-Before outputting TASK_COMPLETE, you MUST review your own code with "fresh eyes":
+Before outputting TASK_COMPLETE, you MUST review your own code with "fresh eyes".
+**This is an iterative loop - do 4 passes minimum: look → fix → look → fix → look → fix → look → verify clean.**
 
+Each pass:
 1. **Re-read all code you wrote or modified** - look at it as if seeing it for the first time
 2. **Check for obvious bugs** - off-by-one errors, null checks, edge cases
 3. **Check for logic errors** - does the code actually do what it's supposed to?
 4. **Check for missing error handling** - what happens when things fail?
 5. **Check for inconsistencies** - naming, patterns, style matching existing code
 6. **Fix anything you find** - don't just note it, actually fix it
+7. **Go back to step 1** - repeat until pass 4 finds nothing to fix
 
-This self-review is cheap (same context) and catches many issues before the expensive
-external review. Take 30 seconds to genuinely re-examine your work.
+Only output TASK_COMPLETE after completing 4 passes. This self-review is cheap (same context)
+and catches many issues before the expensive external review.
 
 ## When Complete
 
