@@ -11,6 +11,7 @@ MAX_ITERATIONS=3
 ALLOW_NO_TESTS="false"
 ALLOW_NO_VERIFY="false"
 LOOP_MODE="false"
+USE_BEADS="false"
 AUTO_COMMIT="true"
 AUTO_PUSH="false"
 COMMIT_PREFIX="feat"
@@ -39,6 +40,7 @@ Options:
   --allow-no-tests         Allow tasks with no test changes
   --allow-no-verify        Allow tasks with no verification commands
   --loop                   Auto-pick next unblocked task until done
+  --beads                  Use beads_rust (br) instead of task-graph.json
   --no-commit              Do not auto-commit after successful review
   --auto-push              Push after each commit (requires clean upstream)
   --commit-prefix <type>   Commit prefix (default: feat)
@@ -75,6 +77,8 @@ parse_args() {
         ALLOW_NO_VERIFY="true"; shift ;;
       --loop)
         LOOP_MODE="true"; shift ;;
+      --beads)
+        USE_BEADS="true"; shift ;;
       --no-commit)
         AUTO_COMMIT="false"; shift ;;
       --auto-push)
@@ -93,6 +97,13 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "Missing required command: $1"
 }
 
+require_beads() {
+  require_cmd br
+  if [[ ! -d "$PROJECT_ROOT/.beads" ]]; then
+    fail "Beads not initialized. Run: br init"
+  fi
+}
+
 require_clean_worktree() {
   if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
     fail "Working tree is not clean. Commit or stash changes before running strict loop."
@@ -100,28 +111,36 @@ require_clean_worktree() {
 }
 
 select_next_task() {
-  require_cmd jq
-  local next
-  next=$(jq -r '
-    def doneIds:
-      [ .phases[].tasks[]
-        | select((.status // "pending") == "complete" or (.status // "pending") == "committed")
-        | .id ];
-    def isUnblocked($done):
-      ((.status // "pending") == "pending")
-      and (((.dependsOn // []) | length) == 0
-           or ((.dependsOn // []) | all(. as $d | $done | index($d))));
+  if [[ "$USE_BEADS" == "true" ]]; then
+    require_beads
+    require_cmd jq
+    local ready
+    ready=$(br ready --json 2>/dev/null || echo "[]")
+    TASK_ID=$(echo "$ready" | jq -r '.[0].id // empty')
+  else
+    require_cmd jq
+    local next
+    next=$(jq -r '
+      def doneIds:
+        [ .phases[].tasks[]
+          | select((.status // "pending") == "complete" or (.status // "pending") == "committed")
+          | .id ];
+      def isUnblocked($done):
+        ((.status // "pending") == "pending")
+        and (((.dependsOn // []) | length) == 0
+             or ((.dependsOn // []) | all(. as $d | $done | index($d))));
 
-    doneIds as $done
-    | .phases
-    | map(.tasks | map(select(isUnblocked($done))))
-    | map(select(length > 0) | .[0])
-    | .[0].id // empty
-  ' "$TASK_GRAPH")
-  if [[ -z "$next" ]]; then
+      doneIds as $done
+      | .phases
+      | map(.tasks | map(select(isUnblocked($done))))
+      | map(select(length > 0) | .[0])
+      | .[0].id // empty
+    ' "$TASK_GRAPH")
+    TASK_ID="$next"
+  fi
+  if [[ -z "$TASK_ID" ]]; then
     return 1
   fi
-  TASK_ID="$next"
 }
 
 update_task_status() {
@@ -130,6 +149,24 @@ update_task_status() {
   local commit_hash="${3:-}"
   local now
   now=$(date -Iseconds)
+  if [[ "$USE_BEADS" == "true" ]]; then
+    case "$status" in
+      running)
+        br update "$id" --status in_progress 2>/dev/null || true
+        ;;
+      committed|complete)
+        br close "$id" --reason "completed" 2>/dev/null || true
+        ;;
+      error)
+        br update "$id" --status blocked --comment "Failed during strict loop" 2>/dev/null || true
+        ;;
+      *)
+        br update "$id" --status "$status" 2>/dev/null || true
+        ;;
+    esac
+    return 0
+  fi
+
   local tmp
   tmp=$(mktemp)
 
@@ -168,23 +205,41 @@ load_task() {
   if [[ -z "$TASK_ID" ]]; then
     fail "--task-id is required"
   fi
-  if [[ ! -f "$TASK_GRAPH" ]]; then
-    fail "Task graph not found at $TASK_GRAPH"
-  fi
-  require_cmd jq
+  if [[ "$USE_BEADS" == "true" ]]; then
+    require_beads
+    require_cmd jq
+    local bead
+    bead=$(br show "$TASK_ID" --json 2>/dev/null || echo "{}")
+    SUBJECT=$(echo "$bead" | jq -r '.title // ""')
+    DESCRIPTION=$(echo "$bead" | jq -r '.description // ""')
+    TAGS=$(echo "$bead" | jq -r '.labels // [] | if type=="array" then join(",") else . end')
+    FILES_HINT=""
+    ACCEPTANCE=""
+    if [[ -z "$VERIFY_CMDS" ]]; then
+      VERIFY_CMDS=""
+    fi
+  else
+    if [[ ! -f "$TASK_GRAPH" ]]; then
+      fail "Task graph not found at $TASK_GRAPH"
+    fi
+    require_cmd jq
 
-  SUBJECT=$(jq -r --arg id "$TASK_ID" '.tasks[] | select(.id==$id) | .subject // ""' "$TASK_GRAPH")
-  DESCRIPTION=$(jq -r --arg id "$TASK_ID" '.tasks[] | select(.id==$id) | .description // ""' "$TASK_GRAPH")
-  FILES_HINT=$(jq -r --arg id "$TASK_ID" '.tasks[] | select(.id==$id) | .files // [] | if type=="array" then join(", ") else . end' "$TASK_GRAPH")
-  ACCEPTANCE=$(jq -r --arg id "$TASK_ID" '.tasks[] | select(.id==$id) | .acceptance // [] | if type=="array" then join("\n") else . end' "$TASK_GRAPH")
-  TAGS=$(jq -r --arg id "$TASK_ID" '.tasks[] | select(.id==$id) | .tags // [] | if type=="array" then join(",") else . end' "$TASK_GRAPH")
+    SUBJECT=$(jq -r --arg id "$TASK_ID" '.phases[].tasks[] | select(.id==$id) | .subject // ""' "$TASK_GRAPH")
+    DESCRIPTION=$(jq -r --arg id "$TASK_ID" '.phases[].tasks[] | select(.id==$id) | .description // ""' "$TASK_GRAPH")
+    FILES_HINT=$(jq -r --arg id "$TASK_ID" '.phases[].tasks[] | select(.id==$id) | .files // [] | if type=="array" then join(", ") else . end' "$TASK_GRAPH")
+    ACCEPTANCE=$(jq -r --arg id "$TASK_ID" '.phases[].tasks[] | select(.id==$id) | .acceptance // [] | if type=="array" then join("\n") else . end' "$TASK_GRAPH")
+    TAGS=$(jq -r --arg id "$TASK_ID" '.phases[].tasks[] | select(.id==$id) | .tags // [] | if type=="array" then join(",") else . end' "$TASK_GRAPH")
 
-  if [[ -z "$VERIFY_CMDS" ]]; then
-    VERIFY_CMDS=$(jq -r --arg id "$TASK_ID" '.tasks[] | select(.id==$id) | .verification // [] | if type=="array" then join(";") else . end' "$TASK_GRAPH")
+    if [[ -z "$VERIFY_CMDS" ]]; then
+      VERIFY_CMDS=$(jq -r --arg id "$TASK_ID" '.phases[].tasks[] | select(.id==$id) | .verification // [] | if type=="array" then join(";") else . end' "$TASK_GRAPH")
+    fi
   fi
 
   if [[ -z "$SUBJECT" ]]; then
-    fail "Task $TASK_ID not found in $TASK_GRAPH"
+    fail "Task $TASK_ID not found"
+  fi
+  if [[ -z "$ACCEPTANCE" ]]; then
+    ACCEPTANCE="(not provided - see description)"
   fi
 }
 

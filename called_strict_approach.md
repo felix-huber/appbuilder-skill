@@ -96,11 +96,14 @@ Repeat until `NO_ISSUES_FOUND`.
 Use `./scripts/strict_ralph.sh` to automate the strict loop.
 
 Examples:
-- Single task: `./scripts/strict_ralph.sh --task-id S1-T1`
-- Full loop: `./scripts/strict_ralph.sh --loop`
+- Single task (task graph): `./scripts/strict_ralph.sh --task-id S1-T1`
+- Full loop (task graph): `./scripts/strict_ralph.sh --loop`
+- Full loop (beads): `./scripts/strict_ralph.sh --loop --beads`
 
 Notes:
-- It auto-picks the next unblocked task in `artifacts/04-task-graph.json`.
+- It auto-picks the next unblocked task from task graph or `br ready --json` if `--beads` is set.
 - It auto-commits after a clean review (use `--no-commit` to disable).
 - It enforces test-file changes via filename patterns (tests/, *_test.go, _spec.rb, etc).
 - If your tests live inline in non-test files, use `--allow-no-tests` and explain why.
+- If using beads, make sure each bead description includes verification commands
+  or pass `--allow-no-verify`.
