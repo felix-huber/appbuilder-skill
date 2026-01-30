@@ -61,7 +61,7 @@ until no changes remain. This is the quality gate that prevents fake tests.
 Once beads are ready:
 
 ```
-./scripts/strict_ralph.sh --loop --beads --tool claude --review-tool claude
+./scripts/strict_ralph.sh --loop --beads --tool claude --review-tool codex
 ```
 
 What this does:

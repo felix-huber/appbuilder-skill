@@ -6,7 +6,8 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 TASK_GRAPH="$PROJECT_ROOT/artifacts/04-task-graph.json"
 
 TOOL="claude"
-REVIEW_TOOL="claude"
+REVIEW_TOOL=""
+ALLOW_SAME_REVIEW_TOOL="false"
 MAX_ITERATIONS=3
 MAX_TASK_ATTEMPTS=3
 STALL_MINUTES=45
@@ -20,6 +21,7 @@ COMMIT_PREFIX="feat"
 PROGRESS_FILE=""
 LEARNINGS_FILE=""
 SUMMARY_FILE=""
+LOOP_STATE_FILE=""
 RUN_ID=""
 TASK_ID=""
 SUBJECT=""
@@ -40,13 +42,14 @@ Options:
   --task-id <id>           Task ID from artifacts/04-task-graph.json
   --task-graph <path>      Path to task-graph.json (default: artifacts/04-task-graph.json)
   --tool <claude|codex>    Tool for implementation (default: claude)
-  --review-tool <claude|codex|manual> Tool for review (default: claude)
+  --review-tool <claude|codex|manual> Tool for review (default: opposite of --tool)
   --verification <cmds>    Semicolon-separated verification commands
   --max-iterations <n>     Max review loops (default: 3)
   --max-attempts <n>        Max attempts per task (default: 3)
   --stall-minutes <n>       Max minutes per tool run if timeout is available (default: 45)
   --allow-no-tests         Allow tasks with no test changes
   --allow-no-verify        Allow tasks with no verification commands
+  --allow-same-review-tool Allow review tool to match implementation tool
   --loop                   Auto-pick next unblocked task until done
   --beads                  Use beads_rust (br) instead of task-graph.json
   --no-commit              Do not auto-commit after successful review
@@ -87,6 +90,8 @@ parse_args() {
         ALLOW_NO_TESTS="true"; shift ;;
       --allow-no-verify)
         ALLOW_NO_VERIFY="true"; shift ;;
+      --allow-same-review-tool)
+        ALLOW_SAME_REVIEW_TOOL="true"; shift ;;
       --loop)
         LOOP_MODE="true"; shift ;;
       --beads)
@@ -113,6 +118,7 @@ init_run_files() {
   PROGRESS_FILE="$PROJECT_ROOT/progress.txt"
   LEARNINGS_FILE="$PROJECT_ROOT/learnings.md"
   SUMMARY_FILE="$PROJECT_ROOT/artifacts/08-execution-summary.md"
+  LOOP_STATE_FILE="$PROJECT_ROOT/artifacts/08-loop_state.json"
   RUN_ID=$(date -Iseconds)
 
   mkdir -p "$PROJECT_ROOT/artifacts"
@@ -127,6 +133,68 @@ Run Started: $RUN_ID
 |--------|---------|--------|--------|-------|
 EOF
   fi
+}
+
+resolve_review_tool() {
+  case "$TOOL" in
+    claude|codex|manual) ;;
+    *)
+      fail "Unsupported tool: $TOOL"
+      ;;
+  esac
+
+  if [[ -z "$REVIEW_TOOL" ]]; then
+    case "$TOOL" in
+      claude) REVIEW_TOOL="codex" ;;
+      codex) REVIEW_TOOL="claude" ;;
+      *) REVIEW_TOOL="manual" ;;
+    esac
+  fi
+
+  case "$REVIEW_TOOL" in
+    claude|codex|manual) ;;
+    *)
+      fail "Unsupported review tool: $REVIEW_TOOL"
+      ;;
+  esac
+
+  if [[ "$ALLOW_SAME_REVIEW_TOOL" != "true" && "$REVIEW_TOOL" == "$TOOL" ]]; then
+    fail "Review tool must differ from implementation tool. Use --review-tool or --allow-same-review-tool."
+  fi
+}
+
+update_loop_state() {
+  local status="$1"
+  local phase="$2"
+  local attempt="$3"
+  local note="${4:-}"
+  local loop_json=false
+  local beads_json=false
+  [[ "$LOOP_MODE" == "true" ]] && loop_json=true
+  [[ "$USE_BEADS" == "true" ]] && beads_json=true
+
+  cat <<EOF > "$LOOP_STATE_FILE"
+{
+  "runId": "$RUN_ID",
+  "updatedAt": "$(date -Iseconds)",
+  "mode": {
+    "loop": $loop_json,
+    "beads": $beads_json
+  },
+  "task": {
+    "id": "$TASK_ID",
+    "subject": "$SUBJECT",
+    "status": "$status",
+    "phase": "$phase",
+    "attempt": $attempt
+  },
+  "tools": {
+    "implementer": "$TOOL",
+    "reviewer": "$REVIEW_TOOL"
+  },
+  "note": "$note"
+}
+EOF
 }
 
 log_progress() {
@@ -172,11 +240,13 @@ select_next_task() {
     require_cmd jq
     local next
     next=$(jq -r '
+      def isDone:
+        ((.status // "pending") == "complete"
+         or (.status // "pending") == "completed"
+         or (.status // "pending") == "committed");
       def doneIds:
         [ .phases[].tasks[]
-          | select((.status // "pending") == "complete"
-                   or (.status // "pending") == "completed"
-                   or (.status // "pending") == "committed")
+          | select(isDone)
           | .id ];
       def isUnblocked($done):
         ((.status // "pending") == "pending")
@@ -185,9 +255,11 @@ select_next_task() {
 
       doneIds as $done
       | .phases
-      | map(.tasks | map(select(isUnblocked($done))))
-      | map(select(length > 0) | .[0])
-      | .[0].id // empty
+      | map(select(.tasks | any(.; (isDone | not))))
+      | .[0] as $phase
+      | if $phase == null then "" else
+          ($phase.tasks | map(select(isUnblocked($done))) | .[0].id // empty)
+        end
     ' "$TASK_GRAPH")
     TASK_ID="$next"
   fi
@@ -541,8 +613,10 @@ run_task_loop() {
   local phase="implement"
   for ((iter=1; iter<=MAX_ITERATIONS; iter++)); do
     attempt=$((attempt + 1))
+    update_loop_state "running" "$phase" "$attempt" "iteration $iter"
     if [[ "$attempt" -gt "$MAX_TASK_ATTEMPTS" ]]; then
       log "Max attempts ($MAX_TASK_ATTEMPTS) exceeded for $TASK_ID"
+      update_loop_state "failed" "$phase" "$attempt" "max attempts exceeded"
       return 1
     fi
     if [[ "$phase" == "implement" ]]; then
@@ -554,6 +628,7 @@ run_task_loop() {
       if [[ "$impl_rc" -ne 0 ]]; then
         log "Implementation tool failed (rc=$impl_rc)."
         log_progress "Task $TASK_ID attempt $attempt failed during implementation"
+        update_loop_state "failed" "$phase" "$attempt" "implementation tool failed"
         continue
       fi
     else
@@ -565,6 +640,7 @@ run_task_loop() {
       if [[ "$fix_rc" -ne 0 ]]; then
         log "Fix tool failed (rc=$fix_rc)."
         log_progress "Task $TASK_ID attempt $attempt failed during fix"
+        update_loop_state "failed" "$phase" "$attempt" "fix tool failed"
         continue
       fi
     fi
@@ -574,6 +650,7 @@ run_task_loop() {
     if ! run_verification; then
       log "Verification failed. Retrying."
       log_progress "Task $TASK_ID attempt $attempt failed verification"
+      update_loop_state "verification_failed" "$phase" "$attempt" "verification failed"
       phase="implement"
       continue
     fi
@@ -591,12 +668,14 @@ run_task_loop() {
     if [[ "$review_rc" -ne 0 ]]; then
       log "Review tool failed (rc=$review_rc). Retrying."
       log_progress "Task $TASK_ID attempt $attempt failed review"
+      update_loop_state "review_failed" "$phase" "$attempt" "review tool failed"
       phase="implement"
       continue
     fi
 
     if echo "$review_output" | grep -qx "NO_ISSUES_FOUND"; then
       log "Review clean. Task complete."
+      update_loop_state "completed" "review" "$attempt" "clean review"
       return 0
     fi
 
@@ -604,10 +683,12 @@ run_task_loop() {
     if [[ -z "$issues" ]]; then
       log "Review output contained no parsable issues. Failing for safety."
       echo "$review_output"
+      update_loop_state "failed" "$phase" "$attempt" "unparsable review output"
       return 1
     fi
 
     log "Issues found. Re-running implementer with fixes."
+    update_loop_state "needs_fix" "review" "$attempt" "issues found"
     phase="fix"
   done
 
@@ -617,6 +698,7 @@ run_task_loop() {
 main() {
   parse_args "$@"
   init_run_files
+  resolve_review_tool
 
   if [[ "$LOOP_MODE" == "true" ]]; then
     require_clean_worktree
@@ -624,6 +706,7 @@ main() {
       VERIFY_CMDS=""
       load_task
       log "Next task: $TASK_ID - $SUBJECT"
+      update_loop_state "starting" "implement" 0 "task selected"
       log_progress "START task $TASK_ID - $SUBJECT"
       update_task_status "$TASK_ID" "running"
       if ! run_task_loop; then
@@ -655,6 +738,7 @@ main() {
 
   load_task
   log "Task: $TASK_ID - $SUBJECT"
+  update_loop_state "starting" "implement" 0 "task selected"
   log_progress "START task $TASK_ID - $SUBJECT"
   run_task_loop
   log_progress "COMPLETE task $TASK_ID - $SUBJECT (no auto-commit)"

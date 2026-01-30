@@ -54,6 +54,8 @@ FRONTEND_TOOL="claude" # Frontend/UI/design tasks → Claude Code (nuanced)
 USE_BEADS=""  # Empty = auto-detect/interactive, "true" = beads, "false" = task-graph
 FRESH_EYES="false"     # Set to "true" for post-task review
 REVIEW_TOOL=""         # Empty = same as coding tool, "codex" or "claude" = cross-model review
+ALLOW_SAME_REVIEW_TOOL="false"
+MIN_REVIEW_PASSES=2
 
 # Self-healing (from task-orchestrator pattern)
 SELF_HEAL="true"       # Auto-recover stuck tasks
@@ -139,6 +141,18 @@ parse_args() {
         fi
         REVIEW_TOOL="$2"
         FRESH_EYES="true"  # Implicitly enable fresh-eyes when review-tool is set
+        shift 2
+        ;;
+      --allow-same-review-tool)
+        ALLOW_SAME_REVIEW_TOOL="true"
+        shift
+        ;;
+      --min-review-passes)
+        if [[ -z "${2:-}" || "$2" == -* ]]; then
+          log_error "--min-review-passes requires a numeric value"
+          exit 1
+        fi
+        MIN_REVIEW_PASSES="$2"
         shift 2
         ;;
       --no-self-heal)
@@ -242,6 +256,11 @@ parse_args() {
         ;;
     esac
   fi
+
+  if ! [[ "$MIN_REVIEW_PASSES" =~ ^[0-9]+$ ]]; then
+    log_error "--min-review-passes must be a non-negative integer"
+    exit 1
+  fi
 }
 
 show_help() {
@@ -262,6 +281,8 @@ Options:
   --no-beads, --graph          Use task-graph.json (Oracle Swarm built-in)
   --fresh-eyes                 Run fresh-eyes code review after each task
   --review-tool <claude|codex> Use different tool for code review (cross-model)
+  --allow-same-review-tool     Allow review tool to match implementation tool
+  --min-review-passes <n>      Minimum fresh-eyes passes before accepting clean (default: 2)
   --no-self-heal               Disable auto-recovery of stuck tasks
   --stall-threshold <min>      Minutes before task is considered stuck (default: 20)
   --auto-pr                    Create PR after each completed task (default: on)
@@ -647,6 +668,20 @@ get_tool_for_task() {
     # Default to claude for unknown
     echo "claude"
   fi
+}
+
+get_review_tool_for_task() {
+  local selected_tool="$1"
+  if [[ -n "$REVIEW_TOOL" ]]; then
+    echo "$REVIEW_TOOL"
+    return
+  fi
+
+  case "$selected_tool" in
+    claude) echo "codex" ;;
+    codex) echo "claude" ;;
+    *) echo "$selected_tool" ;;
+  esac
 }
 
 # Run a task with the specified tool
@@ -1036,7 +1071,12 @@ Then output: HEALER_COMPLETE"
 run_fresh_eyes_review() {
   local tool="$1"
   local max_review_passes=3
+  local min_review_passes="${MIN_REVIEW_PASSES:-2}"
   local pass=1
+
+  if (( min_review_passes > max_review_passes )); then
+    min_review_passes="$max_review_passes"
+  fi
   
   # Check if we're in a git repo
   local in_git_repo=false
@@ -1049,46 +1089,49 @@ run_fresh_eyes_review() {
   # Phase 2: Fix issues (apply changes)
   if [[ "$tool" == "codex" && "$in_git_repo" == "true" ]]; then
     log_info "  Using Codex two-phase code review..."
-    
-    # Check if there are uncommitted changes
-    if [[ -z "$(git status --porcelain 2>/dev/null)" ]]; then
-      log_info "  No uncommitted changes to review"
-      return 0
-    fi
-    
-    # Generate diff for Codex to review
-    local diff_content
-    diff_content=$(git diff HEAD 2>/dev/null || git diff 2>/dev/null || echo "")
-    local staged_diff
-    staged_diff=$(git diff --cached 2>/dev/null || echo "")
-    local changed_files
-    changed_files=$(git diff --name-status HEAD 2>/dev/null || git diff --name-status 2>/dev/null || echo "unknown")
 
-    local combined_diff=""
-    if [[ -n "$diff_content" ]]; then
-      combined_diff="$diff_content"
-    fi
-    if [[ -n "$staged_diff" ]]; then
+    while [[ $pass -le $max_review_passes ]]; do
+      log_info "  Codex review pass $pass/$max_review_passes (min $min_review_passes)..."
+
+      # Check if there are uncommitted changes
+      if [[ -z "$(git status --porcelain 2>/dev/null)" ]]; then
+        log_info "  No uncommitted changes to review"
+        return 0
+      fi
+
+      # Generate diff for Codex to review
+      local diff_content
+      diff_content=$(git diff HEAD 2>/dev/null || git diff 2>/dev/null || echo "")
+      local staged_diff
+      staged_diff=$(git diff --cached 2>/dev/null || echo "")
+      local changed_files
+      changed_files=$(git diff --name-status HEAD 2>/dev/null || git diff --name-status 2>/dev/null || echo "unknown")
+
+      local combined_diff=""
+      if [[ -n "$diff_content" ]]; then
+        combined_diff="$diff_content"
+      fi
+      if [[ -n "$staged_diff" ]]; then
+        if [[ -n "$combined_diff" ]]; then
+          combined_diff="${combined_diff}"$'\n'"$staged_diff"
+        else
+          combined_diff="$staged_diff"
+        fi
+      fi
+
+      local diff_note=""
       if [[ -n "$combined_diff" ]]; then
-        combined_diff="${combined_diff}"$'\n'"$staged_diff"
-      else
-        combined_diff="$staged_diff"
+        local diff_line_count
+        diff_line_count=$(printf '%s\n' "$combined_diff" | wc -l | tr -d ' ')
+        if (( diff_line_count > 500 )); then
+          combined_diff=$(printf '%s\n' "$combined_diff" | head -n 500)
+          diff_note="NOTE: Diff truncated to first 500 lines to avoid context overflow."
+        fi
       fi
-    fi
 
-    local diff_note=""
-    if [[ -n "$combined_diff" ]]; then
-      local diff_line_count
-      diff_line_count=$(printf '%s\n' "$combined_diff" | wc -l | tr -d ' ')
-      if (( diff_line_count > 500 )); then
-        combined_diff=$(printf '%s\n' "$combined_diff" | head -n 500)
-        diff_note="NOTE: Diff truncated to first 500 lines to avoid context overflow."
-      fi
-    fi
-    
-    # PHASE 1: Find issues (using OpenAI's recommended review prompt)
-    log_info "  Phase 1: Analyzing code for issues..."
-    local review_prompt="You are acting as a reviewer for code changes made by another engineer.
+      # PHASE 1: Find issues (using OpenAI's recommended review prompt)
+      log_info "  Phase 1: Analyzing code for issues..."
+      local review_prompt="You are acting as a reviewer for code changes made by another engineer.
 Focus on issues that impact correctness, performance, security, maintainability, or developer experience.
 Flag only actionable issues. When you flag an issue, provide a short, direct explanation and cite the affected file and line range.
 Prioritize severe issues (P1, P2) and avoid nit-level comments.
@@ -1108,27 +1151,36 @@ Use P1, P2, or P3 for severity.
 
 If no issues found, output exactly: NO_ISSUES_FOUND"
 
-    local review_output
-    set +e
-    review_output=$(run_with_tool "$tool" "$review_prompt" 2>&1)
-    set -e
-    
-    # Check if issues were found
-    if echo "$review_output" | grep -qx "NO_ISSUES_FOUND"; then
-      log_success "  Codex review complete - no issues found"
-      return 0
-    fi
+      local review_output
+      set +e
+      review_output=$(run_with_tool "$tool" "$review_prompt" 2>&1)
+      set -e
 
-    local issue_lines
-    issue_lines=$(echo "$review_output" | grep -E '^\[P[123]\]' || true)
-    if [[ -z "$issue_lines" ]]; then
-      log_warn "  Codex review output contained no parsable issues"
-      return 0
-    fi
-    
-    # PHASE 2: Fix the issues found
-    log_info "  Phase 2: Fixing identified issues..."
-    local fix_prompt="You just reviewed this code and found issues. Now fix them.
+      # Check if issues were found
+      if echo "$review_output" | grep -qx "NO_ISSUES_FOUND"; then
+        if [[ $pass -lt $min_review_passes ]]; then
+          log_info "  No issues found, running another pass to satisfy minimum review passes"
+          pass=$((pass + 1))
+          continue
+        fi
+        log_success "  Codex review complete - no issues found"
+        return 0
+      fi
+
+      local issue_lines
+      issue_lines=$(echo "$review_output" | grep -E '^\[P[123]\]' || true)
+      if [[ -z "$issue_lines" ]]; then
+        log_warn "  Codex review output contained no parsable issues"
+        if [[ $pass -lt $min_review_passes ]]; then
+          pass=$((pass + 1))
+          continue
+        fi
+        return 0
+      fi
+
+      # PHASE 2: Fix the issues found
+      log_info "  Phase 2: Fixing identified issues..."
+      local fix_prompt="You just reviewed this code and found issues. Now fix them.
 
 ISSUES FOUND IN REVIEW:
 $issue_lines
@@ -1144,19 +1196,23 @@ Please fix ALL the issues identified above. For each fix:
 After fixing all issues, output: FIXES_APPLIED
 If you couldn't fix something, explain why and output: PARTIAL_FIX"
 
-    local fix_output
-    set +e
-    fix_output=$(run_with_tool "$tool" "$fix_prompt" 2>&1)
-    set -e
-    
-    if echo "$fix_output" | grep -qx "FIXES_APPLIED"; then
-      log_success "  Codex found and fixed all issues"
-    elif echo "$fix_output" | grep -qx "PARTIAL_FIX"; then
-      log_warn "  Codex fixed some issues but not all - manual review needed"
-    else
-      log_info "  Codex fix phase complete"
-    fi
-    
+      local fix_output
+      set +e
+      fix_output=$(run_with_tool "$tool" "$fix_prompt" 2>&1)
+      set -e
+
+      if echo "$fix_output" | grep -qx "FIXES_APPLIED"; then
+        log_success "  Codex found and fixed all issues"
+      elif echo "$fix_output" | grep -qx "PARTIAL_FIX"; then
+        log_warn "  Codex fixed some issues but not all - manual review needed"
+      else
+        log_info "  Codex fix phase complete"
+      fi
+
+      pass=$((pass + 1))
+    done
+
+    log_warn "  Reached max review passes ($max_review_passes), continuing..."
     return 0
   fi
   
@@ -1175,7 +1231,7 @@ EOF
 )
   
   while [[ $pass -le $max_review_passes ]]; do
-    log_info "  Fresh eyes review pass $pass/$max_review_passes..."
+    log_info "  Fresh eyes review pass $pass/$max_review_passes (min $min_review_passes)..."
     
     local review_output
     set +e
@@ -1183,13 +1239,22 @@ EOF
     set -e
     
     if echo "$review_output" | grep -q "<review>NO_ISSUES</review>"; then
+      if [[ $pass -lt $min_review_passes ]]; then
+        log_info "  No issues found, running another pass to satisfy minimum review passes"
+        pass=$((pass + 1))
+        continue
+      fi
       log_success "  Fresh eyes review complete - no issues found"
       return 0
     elif echo "$review_output" | grep -q "<review>FOUND_ISSUES</review>"; then
       log_info "  Issues found and fixed, running another pass..."
       pass=$((pass + 1))
     else
-      # No clear signal, assume done
+      # No clear signal, assume done unless minimum passes not met
+      if [[ $pass -lt $min_review_passes ]]; then
+        pass=$((pass + 1))
+        continue
+      fi
       log_info "  Fresh eyes review complete (no clear signal)"
       return 0
     fi
@@ -1510,6 +1575,8 @@ capture_learnings() {
   local subject="$2"
   local tool="$3"
   local output="$4"
+  local review_tool="${5:-}"
+  local ran_reviews="${6:-false}"
   
   # Extract any learnings/notes from the output
   local learnings=""
@@ -1519,6 +1586,23 @@ capture_learnings() {
     learnings=$(echo "$output" | grep -E "LEARNING:|NOTE:|INSIGHT:|TIP:" | head -10)
   fi
   
+  # Build verification summary (only called after verification succeeds)
+  local verification_parts=()
+  if [[ "${VERIFY_LINT:-true}" == "true" ]]; then
+    verification_parts+=("lint=pass")
+  fi
+  if [[ "${VERIFY_TYPECHECK:-true}" == "true" ]]; then
+    verification_parts+=("typecheck=pass")
+  fi
+  if [[ "${VERIFY_BUILD:-true}" == "true" ]]; then
+    verification_parts+=("build=pass")
+  fi
+  if [[ "${VERIFY_TESTS:-true}" == "true" ]]; then
+    verification_parts+=("tests=pass")
+  fi
+  local verification_summary
+  verification_summary=$(IFS=", "; echo "${verification_parts[*]}")
+
   # Record to learnings file
   {
     echo ""
@@ -1528,6 +1612,16 @@ capture_learnings() {
     echo ""
     echo "**Tool:** $tool"
     echo ""
+    if [[ "$ran_reviews" == "true" ]]; then
+      echo "**Review:** ran (tool: ${review_tool:-unknown})"
+    else
+      echo "**Review:** skipped"
+    fi
+    echo ""
+    if [[ -n "$verification_summary" ]]; then
+      echo "**Verification:** $verification_summary"
+      echo ""
+    fi
     if [[ -n "$learnings" ]]; then
       echo "**Learnings:**"
       echo "$learnings"
@@ -2365,9 +2459,17 @@ main() {
       # COUNCIL OF SUBAGENTS REVIEW (if enabled)
       # Uses specialized subagents: Analyst (quality), Sentinel (anti-patterns), Designer (UI), Healer (fixes)
       local ran_reviews=false
+      local review_tool=""
+      if [[ "${COUNCIL_REVIEW:-false}" == "true" || "${FRESH_EYES:-false}" == "true" ]]; then
+        review_tool=$(get_review_tool_for_task "$selected_tool")
+        if [[ "$ALLOW_SAME_REVIEW_TOOL" != "true" && "$review_tool" == "$selected_tool" ]]; then
+          log_error "Fresh-eyes review requires an independent reviewer."
+          log_error "Use --review-tool or --allow-same-review-tool to proceed."
+          exit 1
+        fi
+      fi
       if [[ "${COUNCIL_REVIEW:-false}" == "true" ]]; then
         ran_reviews=true
-        local review_tool="${REVIEW_TOOL:-$selected_tool}"
         log_info "Running Council of Subagents review..."
         if ! run_council_review "$task_id" "$review_tool" "$tags"; then
           log_error "Council review found unfixable issues!"
@@ -2378,8 +2480,7 @@ main() {
       # FRESH EYES REVIEW (if enabled)
       if [[ "${FRESH_EYES:-false}" == "true" ]]; then
         ran_reviews=true
-        local review_tool="${REVIEW_TOOL:-$selected_tool}"
-        if [[ -n "$REVIEW_TOOL" && "$REVIEW_TOOL" != "$selected_tool" ]]; then
+        if [[ "$review_tool" != "$selected_tool" ]]; then
           log_info "Cross-model review: coded with $selected_tool, reviewing with $review_tool"
         else
           log_info "Running fresh eyes code review..."
@@ -2428,7 +2529,7 @@ main() {
       log_success "Task completed and all verifications passed!"
 
       # Capture learnings from task execution
-      capture_learnings "$task_id" "$subject" "$selected_tool" "$OUTPUT"
+      capture_learnings "$task_id" "$subject" "$selected_tool" "$OUTPUT" "$review_tool" "$ran_reviews"
 
       # AUTO-PR: Create PR for completed task
       if [[ "${AUTO_PR:-true}" == "true" ]]; then

@@ -1,7 +1,7 @@
 # Strict Claude Appbuilder Workflow
 
 This is a strict, repeatable workflow to build a full app with Claude using this repo.
-It enforces TDD, blocks fake tests, and uses fresh Claude instances for review loops.
+It enforces TDD, blocks fake tests, and uses fresh reviewer instances for review loops (cross-model by default).
 
 ## Preconditions
 - Repo initialized
@@ -50,7 +50,7 @@ use the review-loops prompts to keep iterations strict.
 ## Commands to Run Manually (outside Claude Code)
 Run these in your shell (not inside Claude):
 - Beads setup: `br init`, `br ready`, `br list`, `br show`, `br close`, `br update`
-- Strict loop: `./scripts/strict_ralph.sh --loop --beads --tool claude --review-tool claude`
+- Strict loop: `./scripts/strict_ralph.sh --loop --beads --tool claude --review-tool codex`
 - Gates: `./scripts/gate_pack.sh`
 - E2E: `./scripts/run_e2e_happy_paths.sh` (if present)
 - Oracle (optional): `./scripts/oracle_converge.sh <lens> ...` after checking state
@@ -81,7 +81,7 @@ Use a fresh Claude instance for each task.
 5) Commit after verification
 
 ## Phase 4: Strict Review Loop (fresh instance)
-Use a fresh Claude instance for review.
+Use a fresh reviewer instance (preferably a different model).
 
 1) Reviewer receives:
    - Task acceptance criteria
