@@ -74,9 +74,9 @@ Determine if this is a testable task by checking tags:
 7. For each file: read first, edit carefully, preserve formatting
 8. Run verification commands
 9. **MANDATORY: Self-review with fresh eyes** (see below)
-10. If all verifications pass, output `<promise>TASK_COMPLETE</promise>`
+10. If all verifications pass, output `<promise>TASK_COMPLETE</promise>` followed by details
     (Do NOT commit or push - Ralph handles branching/commits/PRs)
-11. Include any learnings in your completion message (use `LEARNING:` prefix)
+    See "When Complete" section below for the exact output format.
 
 ## Critical Rules
 
