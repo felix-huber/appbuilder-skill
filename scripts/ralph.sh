@@ -798,6 +798,45 @@ append_summary() {
   printf '| %s | %s | %s | %s | %s |\n' "$id" "$subject" "$status" "$commit" "$notes" >> "$SUMMARY_FILE"
 }
 
+# Log task progress to progress file (consolidates repeated pattern)
+# Usage: log_task_progress <iteration> <task_id> <subject> <tool> <status> [extra_lines...]
+log_task_progress() {
+  local iteration="$1"
+  local task_id="$2"
+  local subject="$3"
+  local tool="$4"
+  local status="$5"
+  shift 5
+
+  {
+    echo ""
+    echo "### Iteration $iteration - $(date -Iseconds)"
+    echo "- Task: $task_id - $subject"
+    echo "- Tool: $tool"
+    echo "- Status: $status"
+    # Any additional lines passed as arguments
+    for line in "$@"; do
+      echo "- $line"
+    done
+  } >> "$PROGRESS_FILE"
+}
+
+# Handle task failure consistently
+# Usage: handle_task_failure <task_id> <subject> <tool> <iteration> <reason> <summary_note>
+handle_task_failure() {
+  local task_id="$1"
+  local subject="$2"
+  local tool="$3"
+  local iteration="$4"
+  local reason="$5"
+  local summary_note="$6"
+
+  mark_task_failed "$task_id"
+  clear_task_tracking "$task_id"
+  append_summary "$task_id" "$subject" "FAILED" "-" "$summary_note"
+  log_task_progress "$iteration" "$task_id" "$subject" "$tool" "❌ FAILED ($reason)"
+}
+
 # Interactive task source selection
 select_task_source() {
   local has_beads=false
@@ -1193,23 +1232,47 @@ $diff_content"
   return 1
 }
 
-# Run a task with the specified tool
-# Returns: 0 on success, 124 on timeout, other non-zero on failure
-run_with_tool() {
-  local tool="$1"
-  local prompt="$2"
-  local output=""
-  local log_file=""
-  local rc=0
-  local timeout_cmd=""
-  local tmp_output=""
+# Execute a command with optional timeout, capturing output and exit code correctly
+# Usage: _exec_with_timeout <tmp_output_file> <log_file_or_empty> <cmd...>
+# Sets global _EXEC_RC with the exit code
+_exec_with_timeout() {
+  local tmp_output="$1"
+  local log_file="$2"
+  shift 2
+  local cmd=("$@")
 
-  # Detect timeout command
+  # Detect timeout command (cached for performance)
+  local timeout_cmd=""
   if command -v timeout >/dev/null 2>&1; then
     timeout_cmd="timeout"
   elif command -v gtimeout >/dev/null 2>&1; then
     timeout_cmd="gtimeout"
   fi
+
+  # Build and execute the pipeline
+  if [[ -n "$timeout_cmd" ]]; then
+    if [[ -n "$log_file" ]]; then
+      "$timeout_cmd" --kill-after=30s "${STALL_MINUTES}m" "${cmd[@]}" 2>&1 | tee "$tmp_output" | tee -a "$log_file"
+    else
+      "$timeout_cmd" --kill-after=30s "${STALL_MINUTES}m" "${cmd[@]}" 2>&1 | tee "$tmp_output"
+    fi
+  else
+    if [[ -n "$log_file" ]]; then
+      "${cmd[@]}" 2>&1 | tee "$tmp_output" | tee -a "$log_file"
+    else
+      "${cmd[@]}" 2>&1 | tee "$tmp_output"
+    fi
+  fi
+  _EXEC_RC=${PIPESTATUS[0]}
+}
+
+# Run a task with the specified tool
+# Returns: 0 on success, 124 on timeout, other non-zero on failure
+run_with_tool() {
+  local tool="$1"
+  local prompt="$2"
+  local log_file=""
+  local tmp_output=""
 
   # Create log file for this task if we have a task ID
   if [[ -n "$CURRENT_TASK_ID" ]]; then
@@ -1233,66 +1296,33 @@ run_with_tool() {
   tmp_output=$(mktemp)
   trap "rm -f '$tmp_output'" RETURN
 
+  # Get the command for the tool
+  local cmd=""
   case "$tool" in
     claude)
-      # Claude Code CLI flags:
-      #   -p / --print : Non-interactive mode, output to stdout
-      #   --dangerously-skip-permissions : Skip all approval prompts (YOLO mode)
-      # Customize via CLAUDE_CMD env var if needed
-      local claude_cmd="${CLAUDE_CMD:-claude -p --dangerously-skip-permissions}"
-      if [[ -n "$timeout_cmd" ]]; then
-        if [[ -n "$log_file" ]]; then
-          "$timeout_cmd" --kill-after=30s "${STALL_MINUTES}m" $claude_cmd "$prompt" 2>&1 | tee "$tmp_output" | tee -a "$log_file"
-          rc=${PIPESTATUS[0]}
-        else
-          "$timeout_cmd" --kill-after=30s "${STALL_MINUTES}m" $claude_cmd "$prompt" 2>&1 | tee "$tmp_output"
-          rc=${PIPESTATUS[0]}
-        fi
-      else
-        if [[ -n "$log_file" ]]; then
-          $claude_cmd "$prompt" 2>&1 | tee "$tmp_output" | tee -a "$log_file"
-          rc=${PIPESTATUS[0]}
-        else
-          $claude_cmd "$prompt" 2>&1 | tee "$tmp_output"
-          rc=${PIPESTATUS[0]}
-        fi
-      fi
+      # Claude Code CLI: -p for print mode, --dangerously-skip-permissions for YOLO
+      cmd="${CLAUDE_CMD:-claude -p --dangerously-skip-permissions}"
       ;;
     codex)
-      # Codex CLI flags:
-      #   exec / e : Non-interactive execution mode
-      #   --yolo : Skip approvals and sandbox (alias for --dangerously-bypass-approvals-and-sandbox)
-      #   Alternative: --full-auto (safer, keeps sandbox but auto-approves)
-      # Customize via CODEX_CMD env var if needed
-      local codex_cmd="${CODEX_CMD:-codex exec --yolo}"
-      if [[ -n "$timeout_cmd" ]]; then
-        if [[ -n "$log_file" ]]; then
-          "$timeout_cmd" --kill-after=30s "${STALL_MINUTES}m" $codex_cmd "$prompt" 2>&1 | tee "$tmp_output" | tee -a "$log_file"
-          rc=${PIPESTATUS[0]}
-        else
-          "$timeout_cmd" --kill-after=30s "${STALL_MINUTES}m" $codex_cmd "$prompt" 2>&1 | tee "$tmp_output"
-          rc=${PIPESTATUS[0]}
-        fi
-      else
-        if [[ -n "$log_file" ]]; then
-          $codex_cmd "$prompt" 2>&1 | tee "$tmp_output" | tee -a "$log_file"
-          rc=${PIPESTATUS[0]}
-        else
-          $codex_cmd "$prompt" 2>&1 | tee "$tmp_output"
-          rc=${PIPESTATUS[0]}
-        fi
-      fi
+      # Codex CLI: exec for execution mode, --yolo for no approvals
+      cmd="${CODEX_CMD:-codex exec --yolo}"
       ;;
     *)
-      log_error "Unknown tool: $tool"
+      log_error "Unknown tool: $tool. Valid tools: claude, codex"
       return 1
       ;;
   esac
 
+  # Execute with timeout and capture exit code
+  # Note: cmd is intentionally unquoted to allow word splitting
+  _exec_with_timeout "$tmp_output" "$log_file" $cmd "$prompt"
+  local rc=$_EXEC_RC
+
   # Read output from temp file
+  local output
   output=$(cat "$tmp_output")
 
-  # Log completion
+  # Log completion status
   if [[ -n "$log_file" ]]; then
     echo "" >> "$log_file"
     if [[ "$rc" -eq 124 ]]; then
@@ -3056,23 +3086,17 @@ main() {
 
     # Handle tool failures (including timeouts)
     if [[ "$tool_rc" -ne 0 ]]; then
+      local fail_reason="tool exit code $tool_rc"
       if [[ "$tool_rc" -eq 124 ]]; then
+        fail_reason="timeout after ${STALL_MINUTES}m"
         log_error "Tool timed out after ${STALL_MINUTES} minutes."
         update_loop_state "timeout" "implement" 1 "timed out"
       else
         log_error "Tool failed with exit code $tool_rc"
         update_loop_state "failed" "implement" 1 "tool failed (rc=$tool_rc)"
       fi
-      mark_task_failed "$task_id"
-      clear_task_tracking "$task_id"
-      append_summary "$task_id" "$subject" "FAILED" "-" "tool failed (rc=$tool_rc)"
-      {
-        echo ""
-        echo "### Iteration $i - $(date -Iseconds)"
-        echo "- Task: $task_id - $subject"
-        echo "- Tool: $selected_tool"
-        echo "- Status: ❌ FAILED (tool exit code $tool_rc)"
-      } >> "$PROGRESS_FILE"
+
+      handle_task_failure "$task_id" "$subject" "$selected_tool" "$i" "$fail_reason" "tool failed (rc=$tool_rc)"
 
       if [[ "$CONTINUE_ON_ERROR" == "true" ]]; then
         log_warn "Task failed. Waiting 30s before next task..."
@@ -3094,15 +3118,7 @@ main() {
       # CRITICAL: Run task-specific verification BEFORE any reviews
       if ! run_task_verification "$task_id" "$task_verification"; then
         log_error "Task-specific verification FAILED"
-        mark_task_failed "$task_id"
-        clear_task_tracking "$task_id"
-        {
-          echo ""
-          echo "### Iteration $i - $(date -Iseconds)"
-          echo "- Task: $task_id - $subject"
-          echo "- Tool: $selected_tool"
-          echo "- Status: ❌ FAILED (task verification)"
-        } >> "$PROGRESS_FILE"
+        handle_task_failure "$task_id" "$subject" "$selected_tool" "$i" "task verification" "verification failed"
         print_status
         sleep 2
         continue
