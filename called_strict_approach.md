@@ -50,7 +50,7 @@ use the review-loops prompts to keep iterations strict.
 ## Commands to Run Manually (outside Claude Code)
 Run these in your shell (not inside Claude):
 - Beads setup: `br init`, `br ready`, `br list`, `br show`, `br close`, `br update`
-- Strict loop: `./scripts/strict_ralph.sh --loop --beads --tool claude --review-tool codex`
+- Strict loop: `./scripts/ralph.sh --beads --tool claude --review-tool codex --strict 50`
 - Gates: `./scripts/gate_pack.sh`
 - E2E: `./scripts/run_e2e_happy_paths.sh` (if present)
 - Oracle (optional): `./scripts/oracle_converge.sh <lens> ...` after checking state
@@ -114,13 +114,13 @@ Repeat until `NO_ISSUES_FOUND`.
 - Tests must assert real behavior (exit codes, side effects, persistence)
 - No config-only or tautological assertions
 
-## strict_ralph.sh (automated strict loop)
-Use `./scripts/strict_ralph.sh` to automate the strict loop.
+## ralph.sh (automated strict loop)
+Use `./scripts/ralph.sh` to automate the strict loop.
 
 Examples:
-- Single task (task graph): `./scripts/strict_ralph.sh --task-id S1-T1`
-- Full loop (task graph): `./scripts/strict_ralph.sh --loop`
-- Full loop (beads): `./scripts/strict_ralph.sh --loop --beads`
+- Full loop with strict mode (task graph): `./scripts/ralph.sh --strict 50`
+- Full loop with TDD + review (beads): `./scripts/ralph.sh --beads --strict 50`
+- Cross-model review: `./scripts/ralph.sh --beads --tool claude --review-tool codex 50`
 
 Notes:
 - It auto-picks the next unblocked task from task graph or `br ready --json` if `--beads` is set.

@@ -141,17 +141,20 @@ node scripts/compile_task_graph.js
 ./scripts/ralph.sh 50
 ```
 
-### Option 3: strict_ralph.sh — Enforced Backpressure + Cross-Model Review
+### Option 3: Strict Mode — Enforced Backpressure + Cross-Model Review
 
 ```bash
-# Full loop (beads)
-./scripts/strict_ralph.sh --loop --beads --tool claude --review-tool codex
+# Full loop with cross-model review (beads)
+./scripts/ralph.sh --beads --tool claude --review-tool codex --strict 50
 
-# Full loop (task graph)
-./scripts/strict_ralph.sh --loop
+# Full loop with TDD enforcement (task graph)
+./scripts/ralph.sh --strict --require-tests 50
+
+# Limit to 15 tasks with continue-on-error
+./scripts/ralph.sh --beads --max-tasks 15 --continue-on-error 50
 ```
 
-**Backpressure rules (Ralph + strict_ralph):**
+**Backpressure rules (Ralph strict mode):**
 - Tasks must define `verification` commands.
 - Optional `llmVerification` can be used for subjective checks.
 - Defaults for non-Node repos:

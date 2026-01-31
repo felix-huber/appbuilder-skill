@@ -1,7 +1,7 @@
 # Close Gaps Workflow (Strict + Beads + Fresh Claude)
 
 This guide explains how to turn the **PRD Gap Plan** into beads and tests, then run the
-strict auto loop against the codebase using `strict_ralph.sh`.
+strict auto loop against the codebase using `ralph.sh`.
 
 ## 0) Inputs
 1) Save the gap plan as a file (example):
@@ -61,7 +61,7 @@ until no changes remain. This is the quality gate that prevents fake tests.
 Once beads are ready:
 
 ```
-./scripts/strict_ralph.sh --loop --beads --tool claude --review-tool codex
+./scripts/ralph.sh --beads --tool claude --review-tool codex --strict 50
 ```
 
 What this does:

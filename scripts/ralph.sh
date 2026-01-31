@@ -62,6 +62,19 @@ DEFAULT_VERIFY=""
 HAS_CLAUDE="false"
 HAS_CODEX="false"
 
+# Strict mode features (enabled via --strict or individual flags)
+STRICT_MODE="false"    # Enable all strict features at once
+CONTINUE_ON_ERROR="false"  # Continue loop even if a task fails
+MAX_TASKS=0            # Max tasks to process (0=unlimited)
+ALLOW_NO_TESTS="false" # Allow tasks without test changes
+STALL_MINUTES=45       # Max minutes per tool run (used with timeout)
+AUTO_COMMIT="true"     # Auto-commit after successful review
+AUTO_PUSH="false"      # Push after each commit
+COMMIT_PREFIX="feat"   # Commit message prefix
+MAX_TASK_ATTEMPTS=3    # Max retry attempts per task
+LOOP_STATE_FILE=""     # JSON state file for tracking
+SUMMARY_FILE=""        # Markdown summary file
+
 # Self-healing (from task-orchestrator pattern)
 SELF_HEAL="true"       # Auto-recover stuck tasks
 STALL_THRESHOLD=20     # Minutes before considering a task stuck
@@ -240,6 +253,73 @@ parse_args() {
         PR_BASE_BRANCH="$2"
         shift 2
         ;;
+      --strict)
+        STRICT_MODE="true"
+        FRESH_EYES="true"
+        ALLOW_NO_TESTS="false"
+        AUTO_COMMIT="true"
+        shift
+        ;;
+      --continue-on-error)
+        CONTINUE_ON_ERROR="true"
+        shift
+        ;;
+      --max-tasks)
+        if [[ -z "${2:-}" || "$2" == -* ]]; then
+          log_error "--max-tasks requires a numeric value"
+          exit 1
+        fi
+        MAX_TASKS="$2"
+        shift 2
+        ;;
+      --allow-no-tests)
+        ALLOW_NO_TESTS="true"
+        shift
+        ;;
+      --require-tests)
+        ALLOW_NO_TESTS="false"
+        shift
+        ;;
+      --stall-minutes)
+        if [[ -z "${2:-}" || "$2" == -* ]]; then
+          log_error "--stall-minutes requires a numeric value"
+          exit 1
+        fi
+        STALL_MINUTES="$2"
+        shift 2
+        ;;
+      --auto-push)
+        AUTO_PUSH="true"
+        shift
+        ;;
+      --no-commit)
+        AUTO_COMMIT="false"
+        shift
+        ;;
+      --commit-prefix)
+        if [[ -z "${2:-}" || "$2" == -* ]]; then
+          log_error "--commit-prefix requires a value"
+          exit 1
+        fi
+        COMMIT_PREFIX="$2"
+        shift 2
+        ;;
+      --max-attempts)
+        if [[ -z "${2:-}" || "$2" == -* ]]; then
+          log_error "--max-attempts requires a numeric value"
+          exit 1
+        fi
+        MAX_TASK_ATTEMPTS="$2"
+        shift 2
+        ;;
+      --loop)
+        # Explicit loop mode flag (ralph.sh loops by default, this is for CLI compatibility)
+        shift
+        ;;
+      --allow-dirty)
+        # Skip clean working tree check (for testing)
+        shift
+        ;;
       -h|--help)
         show_help
         exit 0
@@ -317,6 +397,19 @@ Options:
   --no-verify-tests            Disable test verification
   --council-review             Enable Council of Subagents review (Analyst/Sentinel/Designer/Healer)
   --no-council-review          Disable council review (default)
+
+Strict Mode Options:
+  --strict                     Enable all strict features (TDD, cross-review, auto-commit)
+  --continue-on-error          Continue loop even if a task fails
+  --max-tasks <n>              Max tasks to process (0=unlimited)
+  --allow-no-tests             Skip TDD test-change requirement
+  --require-tests              Enforce TDD test-change requirement (default)
+  --stall-minutes <n>          Max minutes per tool run before timeout (default: 45)
+  --auto-push                  Push after each successful commit
+  --no-commit                  Disable auto-commit after task completion
+  --commit-prefix <type>       Commit message prefix (default: feat)
+  --max-attempts <n>           Max retry attempts per task (default: 3)
+
   -h, --help                   Show this help
 
 Tool Routing (Doodlestein Methodology):
@@ -560,6 +653,148 @@ format_duration() {
   local minutes=$(((total_seconds % 3600) / 60))
   local seconds=$((total_seconds % 60))
   printf "%02d:%02d:%02d" "$hours" "$minutes" "$seconds"
+}
+
+# TDD enforcement: Check if task tags require test changes
+should_require_tests() {
+  local tags="$1"
+  if [[ -z "$tags" ]]; then
+    return 0  # Default: require tests
+  fi
+  # Tags that require tests
+  if echo "$tags" | grep -E -qi '(core|api|ui|component|worker|data|feature|backend|frontend|db)'; then
+    return 0  # Require tests
+  fi
+  # Tags that don't require tests
+  if echo "$tags" | grep -E -qi '(docs?|chore|setup|config|infra|ops|verify)'; then
+    return 1  # Don't require tests
+  fi
+  return 0  # Default: require tests
+}
+
+# TDD enforcement: Verify test files were changed
+require_test_changes() {
+  if [[ "$ALLOW_NO_TESTS" == "true" ]]; then
+    return 0
+  fi
+  local tags="${1:-}"
+  if ! should_require_tests "$tags"; then
+    log_info "Skipping test-change requirement for non-test task tags: $tags"
+    return 0
+  fi
+  local files
+  files=$(git diff --name-only HEAD 2>/dev/null || git diff --name-only 2>/dev/null || echo "")
+  local test_pattern='(^|/)(tests?|__tests__|__test__|specs?)/|\.test\.|\.spec\.|_test\.(py|go|rs|rb|php)$|_spec\.rb$|test_.*\.py$|\.bats$'
+  if ! echo "$files" | grep -E -q "$test_pattern"; then
+    log_error "No test changes detected. Add real tests or pass --allow-no-tests for non-test tasks."
+    return 1
+  fi
+  return 0
+}
+
+# Update loop state JSON file (for monitoring/debugging)
+update_loop_state() {
+  local status="$1"
+  local phase="$2"
+  local attempt="$3"
+  local note="${4:-}"
+
+  if [[ -z "$LOOP_STATE_FILE" ]]; then
+    return 0
+  fi
+
+  local loop_json=false
+  local beads_json=false
+  [[ "$MAX_ITERATIONS" -gt 1 ]] && loop_json=true
+  [[ "$USE_BEADS" == "true" ]] && beads_json=true
+
+  jq -n \
+    --arg runId "$(date -Iseconds)" \
+    --arg updatedAt "$(date -Iseconds)" \
+    --arg taskId "${CURRENT_TASK_ID:-}" \
+    --arg subject "${CURRENT_SUBJECT:-}" \
+    --arg status "$status" \
+    --arg phase "$phase" \
+    --arg note "$note" \
+    --arg implementer "$TOOL" \
+    --arg reviewer "${REVIEW_TOOL:-$TOOL}" \
+    --argjson attempt "$attempt" \
+    --argjson loop "$loop_json" \
+    --argjson beads "$beads_json" \
+    '{
+      runId: $runId,
+      updatedAt: $updatedAt,
+      mode: { loop: $loop, beads: $beads },
+      task: { id: $taskId, subject: $subject, status: $status, phase: $phase, attempt: $attempt },
+      tools: { implementer: $implementer, reviewer: $reviewer },
+      note: $note
+    }' > "$LOOP_STATE_FILE"
+}
+
+# Commit task changes with optional push
+commit_task_changes() {
+  local task_id="$1"
+  local subject="$2"
+
+  if [[ "$AUTO_COMMIT" != "true" ]]; then
+    return 0
+  fi
+
+  git add -A
+  local message="$COMMIT_PREFIX($task_id): $subject"
+  git commit -m "$message" || {
+    log_warn "Commit failed (possibly no changes)"
+    return 0
+  }
+
+  if [[ "$AUTO_PUSH" == "true" ]]; then
+    if ! git push 2>/dev/null; then
+      log_warn "Push failed. Attempting pull --rebase and retry..."
+      if ! git pull --rebase 2>/dev/null; then
+        log_error "Rebase failed. Manual intervention may be needed."
+        return 1
+      fi
+      if ! git push; then
+        log_error "Push failed after rebase. Continuing anyway."
+        return 1
+      fi
+    fi
+  fi
+  return 0
+}
+
+# Initialize state/summary files for strict mode
+init_strict_files() {
+  if [[ "$STRICT_MODE" == "true" || "$AUTO_COMMIT" == "true" ]]; then
+    LOOP_STATE_FILE="$PROJECT_ROOT/artifacts/08-loop_state.json"
+    SUMMARY_FILE="$PROJECT_ROOT/artifacts/08-execution-summary.md"
+
+    mkdir -p "$PROJECT_ROOT/artifacts"
+
+    if [[ ! -f "$SUMMARY_FILE" ]]; then
+      cat <<EOF > "$SUMMARY_FILE"
+# Execution Summary (ralph)
+
+Run Started: $(date -Iseconds)
+
+| Task ID | Subject | Status | Commit | Notes |
+|--------|---------|--------|--------|-------|
+EOF
+    fi
+  fi
+}
+
+# Append to summary file
+append_summary() {
+  if [[ -z "$SUMMARY_FILE" || ! -f "$SUMMARY_FILE" ]]; then
+    return 0
+  fi
+  local id="$1"
+  local subject="$2"
+  local status="$3"
+  local commit="$4"
+  local notes="$5"
+  printf '| %s | %s | %s | %s | %s |\n' "$id" "$subject" "$status" "$commit" "$notes" >> "$SUMMARY_FILE"
 }
 
 # Interactive task source selection
@@ -958,12 +1193,22 @@ $diff_content"
 }
 
 # Run a task with the specified tool
+# Returns: 0 on success, 124 on timeout, other non-zero on failure
 run_with_tool() {
   local tool="$1"
   local prompt="$2"
   local output=""
   local log_file=""
-  
+  local rc=0
+  local timeout_cmd=""
+
+  # Detect timeout command
+  if command -v timeout >/dev/null 2>&1; then
+    timeout_cmd="timeout"
+  elif command -v gtimeout >/dev/null 2>&1; then
+    timeout_cmd="gtimeout"
+  fi
+
   # Create log file for this task if we have a task ID
   if [[ -n "$CURRENT_TASK_ID" ]]; then
     log_file="$LOGS_DIR/${CURRENT_TASK_ID}.log"
@@ -979,9 +1224,9 @@ run_with_tool() {
     log_info "Logging to: $log_file"
     log_info "Watch with: tail -f $log_file"
   fi
-  
+
   log_tool "Using: $tool"
-  
+
   case "$tool" in
     claude)
       # Claude Code CLI flags:
@@ -989,10 +1234,22 @@ run_with_tool() {
       #   --dangerously-skip-permissions : Skip all approval prompts (YOLO mode)
       # Customize via CLAUDE_CMD env var if needed
       local claude_cmd="${CLAUDE_CMD:-claude -p --dangerously-skip-permissions}"
-      if [[ -n "$log_file" ]]; then
-        output=$($claude_cmd "$prompt" 2>&1 | tee -a "$log_file" | tee /dev/stderr) || true
+      if [[ -n "$timeout_cmd" ]]; then
+        if [[ -n "$log_file" ]]; then
+          output=$("$timeout_cmd" --kill-after=30s "${STALL_MINUTES}m" $claude_cmd "$prompt" 2>&1 | tee -a "$log_file" | tee /dev/stderr)
+          rc=${PIPESTATUS[0]}
+        else
+          output=$("$timeout_cmd" --kill-after=30s "${STALL_MINUTES}m" $claude_cmd "$prompt" 2>&1 | tee /dev/stderr)
+          rc=${PIPESTATUS[0]}
+        fi
       else
-        output=$($claude_cmd "$prompt" 2>&1 | tee /dev/stderr) || true
+        if [[ -n "$log_file" ]]; then
+          output=$($claude_cmd "$prompt" 2>&1 | tee -a "$log_file" | tee /dev/stderr)
+          rc=${PIPESTATUS[0]}
+        else
+          output=$($claude_cmd "$prompt" 2>&1 | tee /dev/stderr)
+          rc=${PIPESTATUS[0]}
+        fi
       fi
       ;;
     codex)
@@ -1002,10 +1259,22 @@ run_with_tool() {
       #   Alternative: --full-auto (safer, keeps sandbox but auto-approves)
       # Customize via CODEX_CMD env var if needed
       local codex_cmd="${CODEX_CMD:-codex exec --yolo}"
-      if [[ -n "$log_file" ]]; then
-        output=$($codex_cmd "$prompt" 2>&1 | tee -a "$log_file" | tee /dev/stderr) || true
+      if [[ -n "$timeout_cmd" ]]; then
+        if [[ -n "$log_file" ]]; then
+          output=$("$timeout_cmd" --kill-after=30s "${STALL_MINUTES}m" $codex_cmd "$prompt" 2>&1 | tee -a "$log_file" | tee /dev/stderr)
+          rc=${PIPESTATUS[0]}
+        else
+          output=$("$timeout_cmd" --kill-after=30s "${STALL_MINUTES}m" $codex_cmd "$prompt" 2>&1 | tee /dev/stderr)
+          rc=${PIPESTATUS[0]}
+        fi
       else
-        output=$($codex_cmd "$prompt" 2>&1 | tee /dev/stderr) || true
+        if [[ -n "$log_file" ]]; then
+          output=$($codex_cmd "$prompt" 2>&1 | tee -a "$log_file" | tee /dev/stderr)
+          rc=${PIPESTATUS[0]}
+        else
+          output=$($codex_cmd "$prompt" 2>&1 | tee /dev/stderr)
+          rc=${PIPESTATUS[0]}
+        fi
       fi
       ;;
     *)
@@ -1013,14 +1282,19 @@ run_with_tool() {
       return 1
       ;;
   esac
-  
+
   # Log completion
   if [[ -n "$log_file" ]]; then
     echo "" >> "$log_file"
-    echo "=== Finished: $(date -Iseconds) ===" >> "$log_file"
+    if [[ "$rc" -eq 124 ]]; then
+      echo "=== TIMEOUT after ${STALL_MINUTES}m: $(date -Iseconds) ===" >> "$log_file"
+    else
+      echo "=== Finished (rc=$rc): $(date -Iseconds) ===" >> "$log_file"
+    fi
   fi
-  
+
   echo "$output"
+  return "$rc"
 }
 
 # Council of Subagents Review Pattern
@@ -2589,6 +2863,7 @@ main() {
   parse_args "$@"
   check_prerequisites
   init_progress
+  init_strict_files
   SESSION_START_TS=$(date +%s)
 
   # Track session start for learning injection
@@ -2621,15 +2896,28 @@ main() {
     log_info "Task source: $TASK_GRAPH"
   fi
   log_info "Max iterations: $MAX_ITERATIONS"
-  
+  if [[ "$MAX_TASKS" -gt 0 ]]; then
+    log_info "Max tasks: $MAX_TASKS"
+  fi
+  if [[ "$STRICT_MODE" == "true" ]]; then
+    log_info "Strict mode: ENABLED (TDD, cross-review, auto-commit)"
+  fi
+
   print_status
-  
+
+  local tasks_completed=0
   for ((i=1; i<=MAX_ITERATIONS; i++)); do
+    # Check MAX_TASKS limit
+    if [[ "$MAX_TASKS" -gt 0 && "$tasks_completed" -ge "$MAX_TASKS" ]]; then
+      log_info "Reached max tasks limit ($MAX_TASKS). Stopping."
+      break
+    fi
+
     echo ""
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     log_info "ITERATION $i of $MAX_ITERATIONS"
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    
+
     # SELF-HEAL: Check for stalled tasks and recover them
     if [[ "${SELF_HEAL:-true}" == "true" ]]; then
       local heal_attempt
@@ -2744,16 +3032,52 @@ main() {
     # Set current task for logging
     CURRENT_TASK_ID="$task_id"
     
+    # Set subject for loop state tracking
+    CURRENT_SUBJECT="$subject"
+
     # Run with selected tool
     log_info "Spawning $selected_tool instance..."
     log_info "Log file: $LOGS_DIR/${task_id}.log"
-    
+    update_loop_state "running" "implement" 1 "started"
+
     set +e
     OUTPUT=$(run_with_tool "$selected_tool" "$prompt")
+    local tool_rc=$?
     set -e
-    
+
+    # Handle tool failures (including timeouts)
+    if [[ "$tool_rc" -ne 0 ]]; then
+      if [[ "$tool_rc" -eq 124 ]]; then
+        log_error "Tool timed out after ${STALL_MINUTES} minutes."
+        update_loop_state "timeout" "implement" 1 "timed out"
+      else
+        log_error "Tool failed with exit code $tool_rc"
+        update_loop_state "failed" "implement" 1 "tool failed (rc=$tool_rc)"
+      fi
+      mark_task_failed "$task_id"
+      clear_task_tracking "$task_id"
+      append_summary "$task_id" "$subject" "FAILED" "-" "tool failed (rc=$tool_rc)"
+      {
+        echo ""
+        echo "### Iteration $i - $(date -Iseconds)"
+        echo "- Task: $task_id - $subject"
+        echo "- Tool: $selected_tool"
+        echo "- Status: ❌ FAILED (tool exit code $tool_rc)"
+      } >> "$PROGRESS_FILE"
+
+      if [[ "$CONTINUE_ON_ERROR" == "true" ]]; then
+        log_warn "Task failed. Waiting 30s before next task..."
+        sleep 30
+        CURRENT_TASK_ID=""
+        continue
+      else
+        log_error "Stopping due to tool failure. Use --continue-on-error to keep going."
+        exit 1
+      fi
+    fi
+
     # Keep CURRENT_TASK_ID set through reviews for logging
-    
+
     # Check for completion signal
     if echo "$OUTPUT" | grep -q "<promise>TASK_COMPLETE</promise>"; then
       log_info "Agent reports task complete. Verifying build..."
@@ -2894,11 +3218,40 @@ main() {
         fi
       fi
 
+      # TDD ENFORCEMENT: Verify test files were changed (strict mode)
+      if [[ "$STRICT_MODE" == "true" || "$ALLOW_NO_TESTS" == "false" ]]; then
+        if ! require_test_changes "$tags"; then
+          mark_task_failed "$task_id"
+          clear_task_tracking "$task_id"
+          append_summary "$task_id" "$subject" "FAILED" "-" "no test changes"
+          {
+            echo ""
+            echo "### Iteration $i - $(date -Iseconds)"
+            echo "- Task: $task_id - $subject"
+            echo "- Tool: $selected_tool"
+            echo "- Status: ❌ FAILED (TDD: no test changes)"
+          } >> "$PROGRESS_FILE"
+          print_status
+          CURRENT_TASK_ID=""
+          sleep 2
+          continue
+        fi
+      fi
+
       # ALL CHECKS PASSED - Now mark task as completed
       mark_task_completed "$task_id"
 
       # Clear stall tracking
       clear_task_tracking "$task_id"
+
+      # Commit changes if auto-commit is enabled
+      local commit_hash=""
+      if [[ "$AUTO_COMMIT" == "true" ]]; then
+        if commit_task_changes "$task_id" "$subject"; then
+          commit_hash=$(git rev-parse HEAD 2>/dev/null || echo "")
+          log_success "Changes committed: $commit_hash"
+        fi
+      fi
 
       # Log to progress
       {
@@ -2908,12 +3261,30 @@ main() {
         echo "- Tool: $selected_tool"
         echo "- Status: ✅ COMPLETED"
         echo "- Build: ✅ VERIFIED"
+        if [[ -n "$commit_hash" ]]; then
+          echo "- Commit: $commit_hash"
+        fi
       } >> "$PROGRESS_FILE"
 
       log_success "Task completed and all verifications passed!"
+      append_summary "$task_id" "$subject" "DONE" "${commit_hash:-manual}" "clean"
+      update_loop_state "completed" "done" 1 "all checks passed"
+
+      # Increment tasks completed counter
+      tasks_completed=$((tasks_completed + 1))
+      log_info "Tasks completed this run: $tasks_completed"
 
       # Capture learnings from task execution
       capture_learnings "$task_id" "$subject" "$selected_tool" "$OUTPUT" "$review_tool" "$ran_reviews"
+
+      # Commit any state files modified after task commit (beads, loop state, etc.)
+      if [[ "$AUTO_COMMIT" == "true" && -n "$(git status --porcelain 2>/dev/null)" ]]; then
+        git add -A
+        git commit -m "chore: update state after $task_id" --no-verify 2>/dev/null || true
+        if [[ "$AUTO_PUSH" == "true" ]]; then
+          git push 2>/dev/null || true
+        fi
+      fi
 
       # AUTO-PR: Create PR for completed task
       if [[ "${AUTO_PR:-true}" == "true" ]]; then
