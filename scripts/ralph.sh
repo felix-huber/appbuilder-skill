@@ -66,8 +66,9 @@ HAS_CODEX="false"
 STRICT_MODE="false"    # Enable all strict features at once
 CONTINUE_ON_ERROR="false"  # Continue loop even if a task fails
 MAX_TASKS=0            # Max tasks to process (0=unlimited)
-ALLOW_NO_TESTS="false" # Allow tasks without test changes
+ALLOW_NO_TESTS="true"  # Allow tasks without test changes (use --strict or --require-tests to enforce)
 STALL_MINUTES=45       # Max minutes per tool run (used with timeout)
+CURRENT_SUBJECT=""     # Current task subject for loop state tracking
 AUTO_COMMIT="true"     # Auto-commit after successful review
 AUTO_PUSH="false"      # Push after each commit
 COMMIT_PREFIX="feat"   # Commit message prefix
@@ -402,8 +403,8 @@ Strict Mode Options:
   --strict                     Enable all strict features (TDD, cross-review, auto-commit)
   --continue-on-error          Continue loop even if a task fails
   --max-tasks <n>              Max tasks to process (0=unlimited)
-  --allow-no-tests             Skip TDD test-change requirement
-  --require-tests              Enforce TDD test-change requirement (default)
+  --allow-no-tests             Skip TDD test-change requirement (default)
+  --require-tests              Enforce TDD test-change requirement
   --stall-minutes <n>          Max minutes per tool run before timeout (default: 45)
   --auto-push                  Push after each successful commit
   --no-commit                  Disable auto-commit after task completion
@@ -1201,6 +1202,7 @@ run_with_tool() {
   local log_file=""
   local rc=0
   local timeout_cmd=""
+  local tmp_output=""
 
   # Detect timeout command
   if command -v timeout >/dev/null 2>&1; then
@@ -1227,6 +1229,10 @@ run_with_tool() {
 
   log_tool "Using: $tool"
 
+  # Create temp file to capture output (needed for correct exit code capture)
+  tmp_output=$(mktemp)
+  trap "rm -f '$tmp_output'" RETURN
+
   case "$tool" in
     claude)
       # Claude Code CLI flags:
@@ -1236,18 +1242,18 @@ run_with_tool() {
       local claude_cmd="${CLAUDE_CMD:-claude -p --dangerously-skip-permissions}"
       if [[ -n "$timeout_cmd" ]]; then
         if [[ -n "$log_file" ]]; then
-          output=$("$timeout_cmd" --kill-after=30s "${STALL_MINUTES}m" $claude_cmd "$prompt" 2>&1 | tee -a "$log_file" | tee /dev/stderr)
+          "$timeout_cmd" --kill-after=30s "${STALL_MINUTES}m" $claude_cmd "$prompt" 2>&1 | tee "$tmp_output" | tee -a "$log_file"
           rc=${PIPESTATUS[0]}
         else
-          output=$("$timeout_cmd" --kill-after=30s "${STALL_MINUTES}m" $claude_cmd "$prompt" 2>&1 | tee /dev/stderr)
+          "$timeout_cmd" --kill-after=30s "${STALL_MINUTES}m" $claude_cmd "$prompt" 2>&1 | tee "$tmp_output"
           rc=${PIPESTATUS[0]}
         fi
       else
         if [[ -n "$log_file" ]]; then
-          output=$($claude_cmd "$prompt" 2>&1 | tee -a "$log_file" | tee /dev/stderr)
+          $claude_cmd "$prompt" 2>&1 | tee "$tmp_output" | tee -a "$log_file"
           rc=${PIPESTATUS[0]}
         else
-          output=$($claude_cmd "$prompt" 2>&1 | tee /dev/stderr)
+          $claude_cmd "$prompt" 2>&1 | tee "$tmp_output"
           rc=${PIPESTATUS[0]}
         fi
       fi
@@ -1261,18 +1267,18 @@ run_with_tool() {
       local codex_cmd="${CODEX_CMD:-codex exec --yolo}"
       if [[ -n "$timeout_cmd" ]]; then
         if [[ -n "$log_file" ]]; then
-          output=$("$timeout_cmd" --kill-after=30s "${STALL_MINUTES}m" $codex_cmd "$prompt" 2>&1 | tee -a "$log_file" | tee /dev/stderr)
+          "$timeout_cmd" --kill-after=30s "${STALL_MINUTES}m" $codex_cmd "$prompt" 2>&1 | tee "$tmp_output" | tee -a "$log_file"
           rc=${PIPESTATUS[0]}
         else
-          output=$("$timeout_cmd" --kill-after=30s "${STALL_MINUTES}m" $codex_cmd "$prompt" 2>&1 | tee /dev/stderr)
+          "$timeout_cmd" --kill-after=30s "${STALL_MINUTES}m" $codex_cmd "$prompt" 2>&1 | tee "$tmp_output"
           rc=${PIPESTATUS[0]}
         fi
       else
         if [[ -n "$log_file" ]]; then
-          output=$($codex_cmd "$prompt" 2>&1 | tee -a "$log_file" | tee /dev/stderr)
+          $codex_cmd "$prompt" 2>&1 | tee "$tmp_output" | tee -a "$log_file"
           rc=${PIPESTATUS[0]}
         else
-          output=$($codex_cmd "$prompt" 2>&1 | tee /dev/stderr)
+          $codex_cmd "$prompt" 2>&1 | tee "$tmp_output"
           rc=${PIPESTATUS[0]}
         fi
       fi
@@ -1282,6 +1288,9 @@ run_with_tool() {
       return 1
       ;;
   esac
+
+  # Read output from temp file
+  output=$(cat "$tmp_output")
 
   # Log completion
   if [[ -n "$log_file" ]]; then
