@@ -363,12 +363,11 @@ $(cat "$PROMPT_FILE")" \
     echo "  2. Keep the Chromium window OPEN during Oracle runs"
     echo "  3. Log into ChatGPT in the Chromium window that opens"
     echo ""
-    echo "Manual fallback - run in terminal:"
+    echo "Manual fallback:"
     echo ""
-    echo "  Request ID: $ORACLE_REQUEST_ID (include at start of prompt)"
-    echo ""
-    echo "  npx -y @steipete/oracle --render --copy-markdown \\"
-    echo "    --prompt \"$ORACLE_REQUEST_ID\n\n\$(cat '$PROMPT_FILE')\" \\"
+    echo "  1. Copy the prompt bundle to clipboard:"
+    echo "     npx -y @steipete/oracle --render --copy-markdown \\"
+    echo "       --prompt \"\$(cat '$PROMPT_FILE')\" \\"
     # Build properly quoted file arguments for display
     QUOTED_FILE_ARGS=""
     for arg in "${FILE_ARGS_ARRAY[@]}"; do
@@ -378,10 +377,15 @@ $(cat "$PROMPT_FILE")" \
         QUOTED_FILE_ARGS="$QUOTED_FILE_ARGS \"$arg\""
       fi
     done
-    echo "   $QUOTED_FILE_ARGS"
+    echo "      $QUOTED_FILE_ARGS"
     echo ""
-    echo "Then paste into ChatGPT (GPT-5.2 Pro) and save response to:"
-    echo "  $OUTPUT_FILE"
+    echo "  2. In ChatGPT (GPT-5.2 Pro), start with this Request ID:"
+    echo "     $ORACLE_REQUEST_ID"
+    echo ""
+    echo "  3. Paste the prompt bundle after the Request ID"
+    echo ""
+    echo "  4. Save the response to:"
+    echo "     $OUTPUT_FILE"
     echo ""
     echo "After saving, press ENTER to continue (or type 'skip' to skip this lens)..."
     read -r USER_RESPONSE
