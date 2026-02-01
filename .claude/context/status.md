@@ -4,7 +4,7 @@
 
 ## Active Work
 
-**Current Focus**: Implementing v2 proposal (CCPM patterns + linting framework)
+**Current Focus**: v2 complete. Ready for next project.
 
 ## Artifact Status
 
@@ -18,13 +18,13 @@
 
 ## Recent Changes
 
-- 2026-02-01: Implementing v2 proposal with context system and linting
+- 2026-02-02: v2 merged to main (context system, AI lint, SAFETY convention)
+- 2026-02-02: Fixed Codex CLI feedback (SQL regex, os.system detection)
+- 2026-02-01: Started v2 proposal implementation
 
 ## Pending Items
 
-- [ ] Full v2 implementation
-- [ ] Fresh eyes review (5 passes)
-- [ ] PR creation and Codex review
+None - v2 complete.
 
 ## Known Issues
 

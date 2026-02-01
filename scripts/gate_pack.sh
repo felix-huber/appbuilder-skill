@@ -156,10 +156,14 @@ if [[ -n "$SECRET_MATCHES" ]]; then
 fi
 
 # Rule 2: SQL injection (string interpolation in SQL) - CRITICAL, NO BYPASS
-# Pattern: execute/query/cursor followed by f-string or template literal with SQL keywords
-SQL_INJECTION=$(grep -rn --include="*.py" --include="*.ts" --include="*.js" \
-  -E "(execute|query|cursor)\s*\(.*f['\"].*\b(SELECT|INSERT|UPDATE|DELETE|FROM|WHERE)\b" . 2>/dev/null | \
-  grep -v "node_modules" | grep -v ".git" | head -10 || true)
+# Catches: f-strings in Python, template literals in JS/TS with SQL keywords
+SQL_INJECTION_PY=$(grep -rn --include="*.py" \
+  -E "(execute|query|cursor).*f['\"].*(SELECT|INSERT|UPDATE|DELETE|FROM|WHERE)" . 2>/dev/null | \
+  grep -v "node_modules" | grep -v ".git" | head -5 || true)
+SQL_INJECTION_JS=$(grep -rn --include="*.ts" --include="*.js" \
+  -E "(execute|query)\s*\(\s*\`[^\`]*(SELECT|INSERT|UPDATE|DELETE)" . 2>/dev/null | \
+  grep -v "node_modules" | grep -v ".git" | head -5 || true)
+SQL_INJECTION="${SQL_INJECTION_PY}${SQL_INJECTION_JS}"
 if [[ -n "$SQL_INJECTION" ]]; then
   AI_LINT_OUTPUT+="❌ CRITICAL: Potential SQL injection (use parameterized queries):\n$SQL_INJECTION\n\n"
   AI_LINT_ERRORS=$((AI_LINT_ERRORS + 1))
@@ -201,12 +205,16 @@ if [[ -n "$UNHANDLED_PROMISE" ]]; then
   AI_LINT_OUTPUT+="⚠️ WARNING: Promise without .catch() handler:\n$UNHANDLED_PROMISE\n\n"
 fi
 
-# Rule 7: Go unchecked errors (basic pattern)
+# Rule 7: Go unchecked errors (basic heuristic)
+# Note: Go's own tooling (go vet, staticcheck) handles this better.
+# This is a simple heuristic that may have false positives.
 GO_UNCHECKED=$(grep -rn --include="*.go" \
   -E "^\s*[a-zA-Z_]+\s*\(" . 2>/dev/null | \
   grep -v "node_modules" | grep -v ".git" | grep -v "if err" | \
   grep -E "(Open|Read|Write|Close|Exec|Query)\(" | head -10 || true)
-# This is a heuristic - Go's tooling handles this better
+if [[ -n "$GO_UNCHECKED" ]]; then
+  AI_LINT_OUTPUT+="⚠️ WARNING: Possible unchecked Go errors (verify manually):\n$(echo "$GO_UNCHECKED" | head -3)\n\n"
+fi
 
 # Rule 8: Rust unwrap without context
 RUST_UNWRAP=$(grep -rn --include="*.rs" \

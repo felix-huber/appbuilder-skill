@@ -77,14 +77,17 @@ Another agent may have changed things.
 When lint rules must be bypassed for valid reasons, use SAFETY comments:
 
 ```python
-# SAFETY: Dynamic table name validated against allowlist in get_valid_tables()
-cursor.execute(f"SELECT * FROM {table_name}")
+# SAFETY: Empty list is intentional for accumulator pattern, never mutated
+def collect_items(items=None, cache=[]):  # mutable default - normally flagged
+    if items:
+        return items
+    return cache
 ```
 
 **Tiers:**
-- **CRITICAL** (secrets, injection): Cannot bypass, ever
+- **CRITICAL** (secrets, SQL injection, shell injection): Cannot bypass, ever
 - **SECURITY**: Requires `SAFETY(TICKET-123)` + human code review
-- **QUALITY**: Allows `SAFETY: explanation`
+- **QUALITY**: Allows `SAFETY: explanation` (e.g., mutable defaults, unwrap)
 - **STYLE**: Info only, no bypass needed
 
 ---

@@ -20,8 +20,7 @@
     "gh": "GitHub CLI for auto-PR"
   },
   "optional": {
-    "beads_rust": "cargo install --git https://github.com/Dicklesworthstone/beads_rust.git",
-    "dcg": "Destructive Command Guard"
+    "beads_rust": "cargo install --git https://github.com/Dicklesworthstone/beads_rust.git"
   }
 }
 ```
