@@ -140,7 +140,7 @@ else
   echo "⏭️ Lint skipped (no lint script)"
 fi
 
-# Gate: AI-Specific Lint (AppBuilder v2)
+# Gate: AI-Specific Lint
 # These rules catch common AI-generated code mistakes
 echo "━━━ Running AI-specific lint checks..."
 AI_LINT_ERRORS=0

@@ -4,7 +4,7 @@
 
 ## Active Work
 
-**Current Focus**: v2 complete. Ready for next project.
+**Current Focus**: Ready for next project.
 
 ## Artifact Status
 
@@ -18,13 +18,12 @@
 
 ## Recent Changes
 
-- 2026-02-02: v2 merged to main (context system, AI lint, SAFETY convention)
-- 2026-02-02: Fixed Codex CLI feedback (SQL regex, os.system detection)
-- 2026-02-01: Started v2 proposal implementation
+- 2026-02-02: Added context system, AI lint rules, SAFETY convention
+- 2026-02-02: Fixed SQL regex, added os.system detection
 
 ## Pending Items
 
-None - v2 complete.
+None.
 
 ## Known Issues
 

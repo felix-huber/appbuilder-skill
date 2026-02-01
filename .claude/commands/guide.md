@@ -7,7 +7,7 @@ Check which artifacts exist and tell the user exactly where they are and what to
 **Always start by running these commands to understand current state:**
 
 ```bash
-# 0. Load project context (new in v2)
+# 0. Load project context
 /context prime
 
 # 1. What artifacts exist?

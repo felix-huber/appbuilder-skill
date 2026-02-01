@@ -77,11 +77,11 @@ Another agent may have changed things.
 When lint rules must be bypassed for valid reasons, use SAFETY comments:
 
 ```python
-# SAFETY: Empty list is intentional for accumulator pattern, never mutated
-def collect_items(items=None, cache=[]):  # mutable default - normally flagged
-    if items:
-        return items
-    return cache
+# SAFETY: Singleton pattern - intentional shared state for caching
+def get_config(config_cache=[None]):
+    if config_cache[0] is None:
+        config_cache[0] = load_config_from_disk()
+    return config_cache[0]
 ```
 
 **Tiers:**
