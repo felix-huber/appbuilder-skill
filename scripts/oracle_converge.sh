@@ -77,6 +77,26 @@ print_box() {
   printf "╚"; printf '═%.0s' $(seq 1 $width); printf "╝\n"
 }
 
+# Generate Oracle Request ID for tracking
+# Format: #<LENS_ABBREV>-<ROUND_PADDED> (e.g., #SEC-001, #PERF-002)
+get_oracle_request_id() {
+  local lens="$1"
+  local round="$2"
+  local abbrev
+  case "$lens" in
+    product)      abbrev="PROD" ;;
+    ux)           abbrev="UX" ;;
+    architecture) abbrev="ARCH" ;;
+    security)     abbrev="SEC" ;;
+    performance)  abbrev="PERF" ;;
+    tests)        abbrev="TEST" ;;
+    simplicity)   abbrev="SIMP" ;;
+    ops)          abbrev="OPS" ;;
+    *)            abbrev=$(echo "$lens" | tr '[:lower:]' '[:upper:]' | cut -c1-4) ;;
+  esac
+  printf "#%s-%03d" "$abbrev" "$round"
+}
+
 if [ -z "$KIND" ] || [ -z "$PRIMARY_FILE" ]; then
   echo "Usage: $0 [--lens <lens|all>] <kind> <primary_file> [context_files...]"
   echo ""
@@ -295,10 +315,14 @@ for LENS in "${LENSES_TO_RUN[@]}"; do
   MAX_ATTEMPTS=3
   ATTEMPT=1
   ORACLE_SUCCESS=false
-  
+
+  # Generate Oracle Request ID for tracking (e.g., #SEC-001)
+  ORACLE_REQUEST_ID=$(get_oracle_request_id "$LENS" "$ROUND")
+  echo -e "   ${CYAN}Request ID: $ORACLE_REQUEST_ID${NC}"
+
   while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
     echo -e "${BLUE}   Oracle attempt $ATTEMPT of $MAX_ATTEMPTS...${NC}"
-    
+
     set +e
     npx -y @steipete/oracle \
       --engine browser \
@@ -308,7 +332,9 @@ for LENS in "${LENSES_TO_RUN[@]}"; do
       --timeout auto \
       --browser-attachments auto \
       --force \
-      --prompt "$(cat "$PROMPT_FILE")" \
+      --prompt "$ORACLE_REQUEST_ID
+
+$(cat "$PROMPT_FILE")" \
       "${FILE_ARGS_ARRAY[@]}" \
       --write-output "$OUTPUT_FILE" 2>&1 | tee "$OUTPUT_DIR/oracle-${LENS}-round${ROUND}-attempt${ATTEMPT}.log"
     ORACLE_EXIT=${PIPESTATUS[0]}
@@ -339,8 +365,10 @@ for LENS in "${LENSES_TO_RUN[@]}"; do
     echo ""
     echo "Manual fallback - run in terminal:"
     echo ""
+    echo "  Request ID: $ORACLE_REQUEST_ID (include at start of prompt)"
+    echo ""
     echo "  npx -y @steipete/oracle --render --copy-markdown \\"
-    echo "    --prompt \"\$(cat '$PROMPT_FILE')\" \\"
+    echo "    --prompt \"$ORACLE_REQUEST_ID\n\n\$(cat '$PROMPT_FILE')\" \\"
     # Build properly quoted file arguments for display
     QUOTED_FILE_ARGS=""
     for arg in "${FILE_ARGS_ARRAY[@]}"; do

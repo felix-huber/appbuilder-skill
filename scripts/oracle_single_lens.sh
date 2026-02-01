@@ -56,12 +56,41 @@ mkdir -p "$OUT_DIR"
 TS="$(date +%Y%m%d-%H%M%S)"
 OUT_FILE="$OUT_DIR/${TS}_${LENS}.md"
 
+# Generate Oracle Request ID for tracking
+get_oracle_request_id() {
+  local lens="$1"
+  local abbrev
+  case "$lens" in
+    product)      abbrev="PROD" ;;
+    ux)           abbrev="UX" ;;
+    architecture) abbrev="ARCH" ;;
+    security)     abbrev="SEC" ;;
+    performance)  abbrev="PERF" ;;
+    tests)        abbrev="TEST" ;;
+    simplicity)   abbrev="SIMP" ;;
+    ops)          abbrev="OPS" ;;
+    *)            abbrev=$(echo "$lens" | tr '[:lower:]' '[:upper:]' | cut -c1-4) ;;
+  esac
+  printf "#%s-001" "$abbrev"
+}
+
+ORACLE_REQUEST_ID=$(get_oracle_request_id "$LENS")
+
 echo "🔮 Running single lens: $KIND / $LENS"
+echo "   Request ID: $ORACLE_REQUEST_ID"
 echo "   Files: $*"
 echo "   Output: $OUT_FILE"
 echo ""
 
-./scripts/oracle_browser_run.sh "$PROMPT_FILE" "$OUT_FILE" "$@"
+# Create temp prompt file with Request ID prepended
+TEMP_PROMPT=$(mktemp)
+echo "$ORACLE_REQUEST_ID" > "$TEMP_PROMPT"
+echo "" >> "$TEMP_PROMPT"
+cat "$PROMPT_FILE" >> "$TEMP_PROMPT"
+
+./scripts/oracle_browser_run.sh "$TEMP_PROMPT" "$OUT_FILE" "$@"
+
+rm -f "$TEMP_PROMPT"
 
 echo ""
 echo "📊 Normalizing to issues.json"
