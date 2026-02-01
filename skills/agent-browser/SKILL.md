@@ -16,8 +16,10 @@ agent-browser install  # Downloads Chromium
 
 ## Core Workflow
 
+Note: Examples use `localhost:3000` as a placeholder. In practice, use the actual server URL (e.g., from `$BASE_URL` in scripts).
+
 ```bash
-# 1. Open page
+# 1. Open page (use your actual server URL)
 agent-browser open http://localhost:3000
 
 # 2. Get interactive elements with refs (@e1, @e2, etc.)
@@ -137,20 +139,25 @@ agent-browser screenshot artifacts/e2e/uj-002.png
 
 ## Integration with Ralph
 
-Add E2E verification to task:
+For E2E tests, use the provided script which handles multi-stack detection and random ports:
+
+```bash
+# Run E2E happy path tests (auto-detects stack, uses random port)
+./scripts/run_e2e_happy_paths.sh
+
+# Show browser during tests
+./scripts/run_e2e_happy_paths.sh --headed
+
+# Override port if needed
+PORT=8080 ./scripts/run_e2e_happy_paths.sh
+```
+
+Add E2E verification to task (manual approach):
 
 ```json
 {
   "verification": [
-    "npm run build",
-    "npm run preview &",
-    "sleep 3",
-    "agent-browser open http://localhost:4173",
-    "agent-browser snapshot -i",
-    "agent-browser click @e2",
-    "agent-browser wait --text 'Welcome'",
-    "agent-browser screenshot proof.png",
-    "agent-browser close"
+    "./scripts/run_e2e_happy_paths.sh"
   ]
 }
 ```
@@ -206,6 +213,6 @@ agent-browser wait --load networkidle
 - Checking responsive behavior
 
 ❌ Don't use for:
-- Unit tests (use vitest/jest)
+- Unit tests (use vitest/jest/pytest/cargo test)
 - API tests (use fetch/curl)
-- Static analysis (use eslint/tsc)
+- Static analysis (use eslint/tsc/ruff/clippy)

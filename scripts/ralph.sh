@@ -8,7 +8,7 @@ set -euo pipefail
 # https://github.com/snarktank/ralph
 #
 # Supports multiple AI coding tools:
-#   - Claude Code: claude -p --dangerously-skip-permissions
+#   - Claude Code: claude -p --dangerously-skip-permissions --no-session-persistence
 #   - Codex CLI: codex exec --yolo
 #   - Smart routing (default): backend→Codex, UI→Claude
 #
@@ -27,7 +27,7 @@ set -euo pipefail
 #   --beads                      Use beads_rust (br) for task management instead of task-graph.json
 #
 # CLI Flags Used:
-#   Claude Code: claude -p --dangerously-skip-permissions "<prompt>"
+#   Claude Code: claude -p --dangerously-skip-permissions --no-session-persistence "<prompt>"
 #   Codex CLI:   codex exec --yolo "<prompt>"
 #
 # Examples:
@@ -36,6 +36,7 @@ set -euo pipefail
 #   ./scripts/ralph.sh --tool smart 50       # Smart routing by task type
 #   ./scripts/ralph.sh --ask 50              # Ask for each task
 #   ./scripts/ralph.sh --beads 50            # Use beads for task tracking
+#   ./scripts/ralph.sh --auto-push 50        # Push after each commit (recommended for CI sync)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -45,6 +46,47 @@ LEARNINGS_FILE="$PROJECT_ROOT/learnings.md"
 LOGS_DIR="$PROJECT_ROOT/.beads/logs"
 CURRENT_TASK_ID=""  # Set during execution for logging
 SESSION_START_TS=0
+
+# Lockfile to prevent multiple ralph instances from running concurrently
+RALPH_LOCK="$PROJECT_ROOT/.ralph.lock"
+OVERRIDE_LOCK_PID=""
+
+# Pre-parse --override-lock before acquiring lock (so agents can override without deleting files)
+_args=("$@")
+for ((i=0; i<${#_args[@]}; i++)); do
+  if [[ "${_args[i]}" == "--override-lock" ]] && [[ -n "${_args[i+1]:-}" ]]; then
+    OVERRIDE_LOCK_PID="${_args[i+1]}"
+    break
+  fi
+done
+unset _args
+
+cleanup_lock() { rm -f "$RALPH_LOCK" 2>/dev/null; }
+handle_signal() { exit 130; }  # 130 = 128 + SIGINT(2); EXIT trap handles cleanup
+acquire_lock() {
+  if [[ -f "$RALPH_LOCK" ]]; then
+    local lock_pid
+    lock_pid=$(cat "$RALPH_LOCK" 2>/dev/null || echo "")
+
+    # Allow override if user specifies the correct PID
+    if [[ -n "$OVERRIDE_LOCK_PID" ]] && [[ "$lock_pid" == "$OVERRIDE_LOCK_PID" ]]; then
+      echo "INFO: Overriding lock from PID $lock_pid (--override-lock)" >&2
+    elif [[ -n "$lock_pid" ]] && kill -0 "$lock_pid" 2>/dev/null; then
+      echo "ERROR: Another ralph instance is running (PID $lock_pid)" >&2
+      echo "Options:" >&2
+      echo "  1. Remove lock: rm $RALPH_LOCK" >&2
+      echo "  2. Override:    ./scripts/ralph.sh --override-lock $lock_pid [other args]" >&2
+      exit 1
+    else
+      echo "WARN: Removing stale lock from dead process $lock_pid" >&2
+    fi
+    rm -f "$RALPH_LOCK"
+  fi
+  echo $$ > "$RALPH_LOCK"
+  trap cleanup_lock EXIT
+  trap handle_signal INT TERM
+}
+acquire_lock
 
 # Defaults
 MAX_ITERATIONS=20
@@ -85,11 +127,19 @@ AUTO_PR="true"         # Auto-create PRs when tasks complete (requires gh CLI)
 PR_BASE_BRANCH="main"  # Base branch for PRs
 
 # Build verification (CRITICAL for catching broken code)
-VERIFY_BUILD="true"    # Run npm run build after each task (default: true)
-VERIFY_TYPECHECK="true" # Run npm run typecheck after each task (default: true)
-VERIFY_LINT="true"     # Run npm run lint after each task (default: true)
+VERIFY_BUILD="true"    # Run build command after each task (default: true)
+VERIFY_TYPECHECK="true" # Run typecheck command after each task (default: true)
+VERIFY_LINT="true"     # Run lint command after each task (default: true)
 VERIFY_TESTS="true"    # Run npm test after each task (default: true)
+SCOPED_TESTS_ONLY="false"  # Skip global npm test if task has scoped verification
 BUILD_FAIL_COUNT=0     # Track consecutive build failures
+LAST_FAIL_SIGNATURE=""  # Hash of last failure for flaky detection
+LAST_FAIL_TASK_ID=""    # Task ID of last failure
+SAME_FAIL_COUNT=0       # Count of identical consecutive failures
+FLAKY_FAIL_THRESHOLD=3  # Skip task after this many identical failures
+
+# Final E2E regression suite (runs once at end after all tasks complete)
+FINAL_E2E="true"       # Run full E2E suite before declaring success (catches regressions)
 
 # Council of Subagents review (multi-agent verification pattern)
 # Uses specialized subagents: Analyst (quality), Sentinel (anti-patterns), Designer (UI), Healer (fixes)
@@ -105,8 +155,8 @@ NC='\033[0m' # No Color
 
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $1" >&2; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
 log_tool() { echo -e "${CYAN}[TOOL]${NC} $1"; }
 
 # Parse arguments
@@ -198,6 +248,14 @@ parse_args() {
         STALL_THRESHOLD="$2"
         shift 2
         ;;
+      --override-lock)
+        # Already pre-parsed before acquire_lock, just consume the argument
+        if [[ -z "${2:-}" || "$2" == -* ]]; then
+          log_error "--override-lock requires a PID value"
+          exit 1
+        fi
+        shift 2
+        ;;
       --auto-pr)
         AUTO_PR="true"
         shift
@@ -236,6 +294,18 @@ parse_args() {
         ;;
       --no-verify-tests)
         VERIFY_TESTS="false"
+        shift
+        ;;
+      --scoped-tests-only)
+        SCOPED_TESTS_ONLY="true"
+        shift
+        ;;
+      --no-final-e2e)
+        FINAL_E2E="false"
+        shift
+        ;;
+      --final-e2e)
+        FINAL_E2E="true"
         shift
         ;;
       --council-review)
@@ -328,7 +398,7 @@ parse_args() {
       *)
         if [[ "$1" =~ ^[0-9]+$ ]]; then
           MAX_ITERATIONS="$1"
-        elif [[ "$1" != -* ]]; then
+        else
           log_warn "Ignoring unknown argument: $1"
         fi
         shift
@@ -355,8 +425,25 @@ parse_args() {
     esac
   fi
 
+  # Validate numeric arguments
   if ! [[ "$MIN_REVIEW_PASSES" =~ ^[0-9]+$ ]]; then
     log_error "--min-review-passes must be a non-negative integer"
+    exit 1
+  fi
+  if ! [[ "$MAX_TASKS" =~ ^[0-9]+$ ]]; then
+    log_error "--max-tasks must be a non-negative integer"
+    exit 1
+  fi
+  if ! [[ "$STALL_MINUTES" =~ ^[1-9][0-9]*$ ]]; then
+    log_error "--stall-minutes must be a positive integer (> 0)"
+    exit 1
+  fi
+  if ! [[ "$STALL_THRESHOLD" =~ ^[1-9][0-9]*$ ]]; then
+    log_error "--stall-threshold must be a positive integer (> 0)"
+    exit 1
+  fi
+  if ! [[ "$MAX_TASK_ATTEMPTS" =~ ^[1-9][0-9]*$ ]]; then
+    log_error "--max-attempts must be a positive integer (> 0)"
     exit 1
   fi
 }
@@ -385,6 +472,7 @@ Options:
   --min-review-passes <n>      Minimum fresh-eyes passes before accepting clean (default: 2)
   --no-self-heal               Disable auto-recovery of stuck tasks
   --stall-threshold <min>      Minutes before task is considered stuck (default: 20)
+  --override-lock <pid>        Override stale lockfile from specified PID (for agents that can't delete files)
   --auto-pr                    Create PR after each completed task (default: on)
   --no-auto-pr                 Disable auto-PR creation
   --pr-base <branch>           Base branch for PRs (default: main)
@@ -396,6 +484,9 @@ Options:
   --no-verify-lint             Disable lint verification
   --verify-tests               Enable test verification (default: on)
   --no-verify-tests            Disable test verification
+  --scoped-tests-only          Skip global npm test if task has scoped verification
+  --final-e2e                  Run full E2E suite at end (default: true if e2e exists)
+  --no-final-e2e               Skip final E2E regression suite
   --council-review             Enable Council of Subagents review (Analyst/Sentinel/Designer/Healer)
   --no-council-review          Disable council review (default)
 
@@ -443,11 +534,12 @@ Fresh Eyes Review (--fresh-eyes):
 
 Build Verification (enabled by default):
   After each task completion (before marking complete):
-  1. Run npm run lint     → Catch code quality issues
-  2. Run npm run typecheck → Catch TypeScript errors
-  3. Run npm run build    → Catch build errors
-  4. Run npm run test     → Verify TDD tests pass
-  5. Detect anti-patterns  → Disabled lint rules, weakened tsconfig
+  1. Run lint command      → Catch code quality issues
+  2. Run typecheck command → Catch type errors
+  3. Run build command     → Catch build errors
+  4. Run test command      → Verify tests pass
+  5. Detect anti-patterns  → Disabled lint rules, suspicious changes
+  Commands are auto-detected: Makefile targets, npm scripts, cargo, pytest, etc.
   If ANY step fails, the task is marked FAILED even if agent said complete.
   Use --no-verify-build, --no-verify-tests, etc to disable specific checks.
 
@@ -487,8 +579,10 @@ Learnings Capture:
   Useful for improving future prompts and workflows.
 
 CLI Flags Used (YOLO mode by default):
-  Claude Code: claude -p --dangerously-skip-permissions "<prompt>"
+  Claude Code: claude -p --dangerously-skip-permissions --no-session-persistence "<prompt>"
   Codex CLI:   codex exec --yolo "<prompt>"
+
+  Note: Commands run with stdin redirected from /dev/null to ensure synchronous execution.
 
 Environment Variables:
   CLAUDE_CMD       Custom Claude Code command
@@ -622,7 +716,7 @@ check_prerequisites() {
     fi
     
     # Check if beads is initialized
-    if [[ ! -d ".beads" ]]; then
+    if [[ ! -d "$PROJECT_ROOT/.beads" ]]; then
       log_error "Beads not initialized in this project."
       log_error "Run: br init"
       exit 1
@@ -843,7 +937,7 @@ select_task_source() {
   local has_graph=false
   
   # Check what's available
-  [[ -d ".beads" ]] && command -v br &> /dev/null && has_beads=true
+  [[ -d "$PROJECT_ROOT/.beads" ]] && command -v br &> /dev/null && has_beads=true
   [[ -f "$TASK_GRAPH" ]] && has_graph=true
   
   # If both are available, ask user
@@ -1009,14 +1103,12 @@ extract_section() {
 
 build_task_json_from_bead() {
   local bead_json="$1"
-  local id
-  local title
-  local desc
-  local labels_json
-  id=$(echo "$bead_json" | jq -r '.id')
-  title=$(echo "$bead_json" | jq -r '.title')
-  desc=$(echo "$bead_json" | jq -r '.description // ""')
-  labels_json=$(echo "$bead_json" | jq -c '.labels // [] | map(ascii_downcase)')
+  local id title desc labels_json
+  # Use here-strings (<<<) instead of echo to preserve backslashes and special characters in JSON
+  id=$(jq -r '.id' <<< "$bead_json")
+  title=$(jq -r '.title' <<< "$bead_json")
+  desc=$(jq -r '.description // ""' <<< "$bead_json")
+  labels_json=$(jq -c '.labels // [] | map(ascii_downcase)' <<< "$bead_json")
 
   local verification
   local llm_verification
@@ -1060,9 +1152,26 @@ get_review_tool_for_task() {
 
 load_default_verification() {
   local default_value="${DEFAULT_VERIFY:-${RALPH_DEFAULT_VERIFY:-}}"
+
+  # Check verification.txt file
   if [[ -z "$default_value" && -f "$PROJECT_ROOT/verification.txt" ]]; then
     default_value=$(grep -v '^[[:space:]]*#' "$PROJECT_ROOT/verification.txt" | sed '/^[[:space:]]*$/d')
   fi
+
+  # Auto-detect verification command from project stack (package.json, Cargo.toml, etc.)
+  if [[ -z "$default_value" ]]; then
+    local test_cmd build_cmd
+    test_cmd=$(get_cmd "test" 2>/dev/null) || true
+    build_cmd=$(get_cmd "build" 2>/dev/null) || true
+    if [[ -n "$test_cmd" ]]; then
+      default_value="$test_cmd"
+      log_info "Auto-detected verification from stack: $test_cmd"
+    elif [[ -n "$build_cmd" ]]; then
+      default_value="$build_cmd"
+      log_info "Auto-detected verification from stack: $build_cmd"
+    fi
+  fi
+
   printf '%s\n' "$default_value"
 }
 
@@ -1084,6 +1193,17 @@ get_task_llm_verification() {
       elif type=="string" then .
       else "" end
   '
+}
+
+# Refresh task verification by re-reading from source (bead file or task-graph.json)
+# This allows picking up verification commands that were added/fixed during iteration
+refresh_task_verification() {
+  local task_id="$1"
+  local task_json
+  task_json=$(get_task_by_id "$task_id")
+  if [[ -n "$task_json" ]]; then
+    get_task_verification "$task_json"
+  fi
 }
 
 ensure_task_verification() {
@@ -1118,6 +1238,31 @@ ensure_task_verification() {
   printf '%s\n' "$task_json"
 }
 
+# Check if a string looks like an executable command (not descriptive text)
+looks_like_command() {
+  local cmd="$1"
+  # Skip empty lines
+  [[ -z "$cmd" ]] && return 1
+
+  # Skip lines that look like markdown or documentation
+  [[ "$cmd" =~ ^[#*-][[:space:]] ]] && return 1
+  [[ "$cmd" =~ ^[0-9]+\.[[:space:]] ]] && return 1
+
+  # Known command prefixes - definitely commands
+  if [[ "$cmd" =~ ^(npm|npx|node|python|pip|pytest|cargo|go|make|bash|sh|curl|wget|docker|git|ruby|bundle|yarn|pnpm|bun|deno|flask|django|uvicorn|gunicorn|ruff|mypy|black|eslint|prettier|tsc|vitest|jest|playwright|cypress|cat|echo|ls|cd|mv|cp|rm|touch|mkdir|grep|sed|awk|find|test|\[|\./) ]]; then
+    return 0
+  fi
+
+  # Starts with uppercase = likely English sentence, not a command
+  # (Unix commands are lowercase)
+  if [[ "$cmd" =~ ^[A-Z] ]]; then
+    return 1
+  fi
+
+  # Starts with lowercase = probably a command
+  return 0
+}
+
 run_task_verification() {
   local task_id="$1"
   local verification="$2"
@@ -1128,8 +1273,25 @@ run_task_verification() {
 
   log_info "Running task-specific verification..."
   while IFS= read -r cmd; do
-    cmd=$(echo "$cmd" | xargs)
+    # Trim whitespace using parameter expansion (xargs would strip quotes from commands)
+    cmd="${cmd#"${cmd%%[![:space:]]*}"}"
+    cmd="${cmd%"${cmd##*[![:space:]]}"}"
     [[ -z "$cmd" ]] && continue
+
+    # Skip lines that don't look like commands
+    if ! looks_like_command "$cmd"; then
+      log_warn "Skipping non-command: $cmd"
+      continue
+    fi
+
+    # Auto-fix Vitest CLI syntax: Vitest uses -t for test name filtering, not --grep
+    # Skip this fix for E2E tests since Playwright correctly uses --grep
+    if [[ "$cmd" != *"e2e"* ]] && [[ "$cmd" == *"npm"*"test"*"--grep"* ]] && [[ -f "$PROJECT_ROOT/package.json" ]] && grep -q '"vitest"' "$PROJECT_ROOT/package.json" 2>/dev/null; then
+      local fixed_cmd="${cmd//--grep/-t}"
+      log_warn "Auto-fixing Vitest syntax: --grep → -t"
+      cmd="$fixed_cmd"
+    fi
+
     log_info "Verify: $cmd"
     if ! (cd "$PROJECT_ROOT" && bash -lc "$cmd"); then
       log_error "Task verification failed: $cmd"
@@ -1235,13 +1397,17 @@ $diff_content"
 # Execute a command with optional timeout, capturing output and exit code correctly
 # Usage: _exec_with_timeout <tmp_output_file> <log_file_or_empty> <cmd...>
 # Sets global _EXEC_RC with the exit code
+#
+# Avoid piping through tee which causes PTY buffering issues with interactive CLIs.
+# Instead, write directly to file then display contents afterward.
+# For real-time monitoring, use `tail -f log_file` in a separate terminal.
 _exec_with_timeout() {
   local tmp_output="$1"
   local log_file="$2"
   shift 2
   local cmd=("$@")
 
-  # Detect timeout command (cached for performance)
+  # Detect timeout command
   local timeout_cmd=""
   if command -v timeout >/dev/null 2>&1; then
     timeout_cmd="timeout"
@@ -1249,21 +1415,29 @@ _exec_with_timeout() {
     timeout_cmd="gtimeout"
   fi
 
-  # Build and execute the pipeline
+  # Execute with direct file redirection (avoids PTY buffering issues)
+  # Output goes to tmp_output, which is later copied to log_file
+  # Redirect stdin from /dev/null to prevent CLI from waiting for input
   if [[ -n "$timeout_cmd" ]]; then
-    if [[ -n "$log_file" ]]; then
-      "$timeout_cmd" --kill-after=30s "${STALL_MINUTES}m" "${cmd[@]}" 2>&1 | tee "$tmp_output" | tee -a "$log_file"
-    else
-      "$timeout_cmd" --kill-after=30s "${STALL_MINUTES}m" "${cmd[@]}" 2>&1 | tee "$tmp_output"
-    fi
+    "$timeout_cmd" --kill-after=30s "${STALL_MINUTES}m" "${cmd[@]}" < /dev/null > "$tmp_output" 2>&1
   else
-    if [[ -n "$log_file" ]]; then
-      "${cmd[@]}" 2>&1 | tee "$tmp_output" | tee -a "$log_file"
+    "${cmd[@]}" < /dev/null > "$tmp_output" 2>&1
+  fi
+  _EXEC_RC=$?
+
+  # Ensure file buffers are flushed after potential timeout/kill
+  sync 2>/dev/null || true
+
+  # Append to log file if specified (with explicit error handling)
+  if [[ -n "$log_file" ]]; then
+    if [[ -s "$tmp_output" ]]; then
+      cat "$tmp_output" >> "$log_file"
     else
-      "${cmd[@]}" 2>&1 | tee "$tmp_output"
+      echo "[WARNING] Command produced no output (tmp file empty)" >> "$log_file"
     fi
   fi
-  _EXEC_RC=${PIPESTATUS[0]}
+
+  # Note: Output is returned via the file, not stdout - caller reads tmp_output
 }
 
 # Run a task with the specified tool
@@ -1293,7 +1467,10 @@ run_with_tool() {
   log_tool "Using: $tool"
 
   # Create temp file to capture output (needed for correct exit code capture)
-  tmp_output=$(mktemp)
+  tmp_output=$(mktemp) || {
+    log_error "Failed to create temp file for output capture"
+    return 1
+  }
   trap "rm -f '$tmp_output'" RETURN
 
   # Get the command for the tool
@@ -1301,7 +1478,8 @@ run_with_tool() {
   case "$tool" in
     claude)
       # Claude Code CLI: -p for print mode, --dangerously-skip-permissions for YOLO
-      cmd="${CLAUDE_CMD:-claude -p --dangerously-skip-permissions}"
+      # --no-session-persistence ensures synchronous execution when stdout is redirected
+      cmd="${CLAUDE_CMD:-claude -p --dangerously-skip-permissions --no-session-persistence}"
       ;;
     codex)
       # Codex CLI: exec for execution mode, --yolo for no approvals
@@ -1318,17 +1496,33 @@ run_with_tool() {
   _exec_with_timeout "$tmp_output" "$log_file" $cmd "$prompt"
   local rc=$_EXEC_RC
 
-  # Read output from temp file
-  local output
-  output=$(cat "$tmp_output")
+  # Read output from temp file with robust error handling
+  local output=""
+  if [[ -f "$tmp_output" ]]; then
+    if [[ -s "$tmp_output" ]]; then
+      output=$(cat "$tmp_output")
+    else
+      log_warn "Tool output file exists but is empty: $tmp_output"
+      if [[ -n "$log_file" ]]; then
+        echo "[DEBUG] tmp_output=$tmp_output exists but empty" >> "$log_file"
+        echo "[DEBUG] Checking for stray temp files with TASK_COMPLETE:" >> "$log_file"
+        # Check both Linux (/tmp) and macOS (/var/folders) temp locations
+        local tmpdir="${TMPDIR:-/tmp}"
+        find "$tmpdir" -maxdepth 1 -name 'tmp.*' -mmin -5 -exec grep -l "TASK_COMPLETE" {} \; 2>/dev/null >> "$log_file" || true
+      fi
+    fi
+  else
+    log_warn "Tool output file missing: $tmp_output"
+  fi
 
   # Log completion status
   if [[ -n "$log_file" ]]; then
     echo "" >> "$log_file"
-    if [[ "$rc" -eq 124 ]]; then
-      echo "=== TIMEOUT after ${STALL_MINUTES}m: $(date -Iseconds) ===" >> "$log_file"
+    local output_size=${#output}
+    if [[ "$rc" -eq 124 ]] || [[ "$rc" -eq 137 ]] || [[ "$rc" -eq 143 ]]; then
+      echo "=== TIMEOUT after ${STALL_MINUTES}m (rc=$rc, output_size=$output_size): $(date -Iseconds) ===" >> "$log_file"
     else
-      echo "=== Finished (rc=$rc): $(date -Iseconds) ===" >> "$log_file"
+      echo "=== Finished (rc=$rc, output_size=$output_size): $(date -Iseconds) ===" >> "$log_file"
     fi
   fi
 
@@ -1373,7 +1567,7 @@ run_council_review() {
       # There are uncommitted changes - review those
       changed_files="$uncommitted_files"
       diff_content="$uncommitted_diff"
-    elif git rev-parse HEAD~1 &>/dev/null 2>&1; then
+    elif git rev-parse HEAD~1 &>/dev/null; then
       # No uncommitted changes, but there's a previous commit
       # Review the most recent commit (task probably committed its work)
       changed_files=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "")
@@ -1901,12 +2095,38 @@ get_next_task_beads() {
   
   # Get the first ready task and convert to our format
   local bead_json
-  bead_json=$(echo "$ready_tasks" | jq -c '.[0]')
+  bead_json=$(jq -c '.[0]' <<< "$ready_tasks")
   if [[ -z "$bead_json" || "$bead_json" == "null" ]]; then
     echo ""
     return
   fi
   build_task_json_from_bead "$bead_json"
+}
+
+# Reset stale IN_PROGRESS beads from previous failed runs.
+# When Ralph crashes or is interrupted, beads may be left in IN_PROGRESS state.
+# This function resets them to open so they can be retried.
+reset_stale_in_progress_beads() {
+  [[ "$USE_BEADS" != "true" ]] && return 0
+
+  # Get all beads that are currently in_progress
+  local in_progress
+  in_progress=$(br list --status in_progress --json 2>/dev/null || echo "[]")
+
+  if [[ "$in_progress" == "[]" || -z "$in_progress" ]]; then
+    return 0
+  fi
+
+  local count
+  count=$(jq 'length' <<< "$in_progress")
+  if [[ "$count" -gt 0 ]]; then
+    log_warn "Found $count stale IN_PROGRESS beads from previous run"
+    # Reset each to open status
+    jq -r '.[].id' <<< "$in_progress" | while read -r bead_id; do
+      log_info "Resetting stale bead $bead_id to open"
+      br update "$bead_id" --status open --comment "Reset by Ralph (stale IN_PROGRESS)" 2>/dev/null || true
+    done
+  fi
 }
 
 # Get task by ID
@@ -1919,6 +2139,8 @@ get_task_by_id() {
       echo ""
       return
     fi
+    # Normalize response: br show may return an array or a single object
+    bead_json=$(jq 'if type == "array" then .[0] else . end' <<< "$bead_json")
     build_task_json_from_bead "$bead_json"
   else
     jq -r --arg id "$task_id" '.tasks[] | select(.id == $id)' "$TASK_GRAPH"
@@ -1937,6 +2159,81 @@ mark_task_completed() {
       .tasks = [.tasks[] | if .id == $id then .status = "completed" else . end]
     ' "$TASK_GRAPH" > "$tmp" && mv "$tmp" "$TASK_GRAPH"
     log_success "Marked task $task_id as completed"
+  fi
+}
+
+# Compute a signature from error output for flaky detection
+# Returns a short hash of the error's key characteristics
+compute_fail_signature() {
+  local error_output="$1"
+  # Extract key error identifiers: test names, file:line, error messages
+  local filtered
+  filtered=$(echo "$error_output" | grep -iE "fail|error|timeout|✗" | head -10)
+  # Cross-platform hash (md5sum on Linux, md5 on macOS)
+  if command -v md5sum &>/dev/null; then
+    echo "$filtered" | md5sum | cut -c1-8
+  elif command -v md5 &>/dev/null; then
+    echo "$filtered" | md5 | cut -c1-8
+  else
+    # Fallback: use first 8 chars of base64-encoded content
+    echo "$filtered" | head -c 100 | base64 | cut -c1-8
+  fi
+}
+
+# Check if this is a repeated flaky failure and should be skipped
+# Returns 0 if should skip, 1 if should continue retrying
+# Tracks both task ID and error signature to detect:
+# 1. Same task failing repeatedly with same error (flaky test)
+# 2. Different tasks failing with same error (global breakage)
+check_flaky_skip() {
+  local task_id="$1"
+  local error_output="$2"
+
+  local signature
+  signature=$(compute_fail_signature "$error_output")
+
+  # Check if same task AND same signature
+  if [[ "$task_id" == "$LAST_FAIL_TASK_ID" && "$signature" == "$LAST_FAIL_SIGNATURE" ]]; then
+    SAME_FAIL_COUNT=$((SAME_FAIL_COUNT + 1))
+    log_warn "Same task failing with same error ($SAME_FAIL_COUNT/$FLAKY_FAIL_THRESHOLD)"
+  elif [[ "$signature" == "$LAST_FAIL_SIGNATURE" ]]; then
+    # Different task, same error - might be global issue
+    SAME_FAIL_COUNT=$((SAME_FAIL_COUNT + 1))
+    log_warn "Different task, same error pattern ($SAME_FAIL_COUNT/$FLAKY_FAIL_THRESHOLD)"
+  else
+    # Different error - reset counter
+    LAST_FAIL_TASK_ID="$task_id"
+    LAST_FAIL_SIGNATURE="$signature"
+    SAME_FAIL_COUNT=1
+  fi
+
+  if [[ "$SAME_FAIL_COUNT" -ge "$FLAKY_FAIL_THRESHOLD" ]]; then
+    log_error "╔════════════════════════════════════════════════════════════════╗"
+    log_error "║  REPEATED FAILURE DETECTED - Skipping after $SAME_FAIL_COUNT identical failures   ║"
+    log_error "╚════════════════════════════════════════════════════════════════╝"
+    mark_task_blocked_flaky "$task_id" "$signature"
+    # Reset for next task
+    LAST_FAIL_TASK_ID=""
+    LAST_FAIL_SIGNATURE=""
+    SAME_FAIL_COUNT=0
+    return 0  # Should skip
+  fi
+  return 1  # Should continue retrying
+}
+
+# Mark task as blocked due to flaky test
+mark_task_blocked_flaky() {
+  local task_id="$1"
+  local signature="$2"
+  if [[ "$USE_BEADS" == "true" ]]; then
+    br update "$task_id" --status blocked --comment "Blocked: flaky test (signature: $signature). Needs manual investigation." 2>/dev/null || true
+    log_warn "Marked beads task $task_id as blocked (flaky test)"
+  else
+    local tmp=$(mktemp)
+    jq --arg id "$task_id" --arg sig "$signature" '
+      .tasks = [.tasks[] | if .id == $id then .status = "blocked" | .blockedReason = "flaky_test" | .failSignature = $sig else . end]
+    ' "$TASK_GRAPH" > "$tmp" && mv "$tmp" "$TASK_GRAPH"
+    log_warn "Marked task $task_id as blocked (flaky test)"
   fi
 }
 
@@ -1997,26 +2294,43 @@ clear_task_tracking() {
   fi
 }
 
-# Check if a task has stalled (exceeded STALL_THRESHOLD)
+# Check if a task has stalled (exceeded STALL_THRESHOLD or no log activity)
+# Uses both wall-clock time AND log file heartbeat for accurate detection
 check_task_stalled() {
   local task_id="$1"
   init_task_tracking
-  
+
   local start_time
   start_time=$(jq -r --arg id "$task_id" '.[$id] // 0' "$TASK_TRACKING_FILE" 2>/dev/null || echo "0")
-  
+
   if [[ "$start_time" -eq 0 ]]; then
     return 1  # No start time recorded, not stalled
   fi
-  
+
   local now=$(date +%s)
   local elapsed_minutes=$(( (now - start_time) / 60 ))
-  
+
+  # Check 1: Total time threshold
   if [[ "$elapsed_minutes" -ge "$STALL_THRESHOLD" ]]; then
     log_warn "Task $task_id has been tracked for $elapsed_minutes minutes (threshold: $STALL_THRESHOLD)"
     return 0  # Stalled
   fi
-  
+
+  # Check 2: Log file heartbeat (no output for 5+ minutes = likely stuck)
+  local log_file="$LOGS_DIR/${task_id}.log"
+  if [[ -f "$log_file" ]]; then
+    # Get mtime: try macOS format, then Linux, fallback to now
+    local log_mtime
+    log_mtime=$(stat -f %m "$log_file" 2>/dev/null) || \
+    log_mtime=$(stat -c %Y "$log_file" 2>/dev/null) || \
+    log_mtime=$now
+    local log_age_minutes=$(( (now - log_mtime) / 60 ))
+    if [[ "$log_age_minutes" -ge 5 ]] && [[ "$elapsed_minutes" -ge 5 ]]; then
+      log_warn "Task $task_id log has no output for ${log_age_minutes}m (heartbeat check)"
+      return 0  # Stalled - no log activity
+    fi
+  fi
+
   return 1  # Not stalled
 }
 
@@ -2243,23 +2557,111 @@ capture_learnings() {
 # Check if npm script exists in package.json
 has_npm_script() {
   local script="$1"
-  [[ -f "package.json" ]] || return 1
+  [[ -f "$PROJECT_ROOT/package.json" ]] || return 1
   command -v node &>/dev/null || return 1
-  node -e 'const p=require("./package.json"); const s=process.argv[1]; process.exit(((p.scripts||{})[s])?0:1)' "$script" 2>/dev/null
+  # Pass path as argument to avoid issues with special characters in path
+  node -e 'const p=require(process.argv[1]); const s=process.argv[2]; process.exit(((p.scripts||{})[s])?0:1)' "$PROJECT_ROOT/package.json" "$script" 2>/dev/null
+}
+
+# Get the command for a given task type (lint, test, build, typecheck)
+# Supports multiple tech stacks with Makefile as universal override
+get_cmd() {
+  local cmd_type="$1"  # lint, test, build, typecheck, dev
+
+  # Makefile is the universal override - check first
+  if [[ -f "$PROJECT_ROOT/Makefile" ]] && grep -q "^${cmd_type}:" "$PROJECT_ROOT/Makefile" 2>/dev/null; then
+    echo "make $cmd_type"
+    return 0
+  fi
+
+  # Project-type detection (priority order: Node > Python > Rust > Go > Ruby)
+  if [[ -f "$PROJECT_ROOT/package.json" ]]; then
+    # Node.js - check if script exists
+    if has_npm_script "$cmd_type"; then
+      echo "npm run $cmd_type"
+      return 0
+    fi
+    # Fallback for common script name variations
+    case "$cmd_type" in
+      typecheck)
+        has_npm_script "type-check" && echo "npm run type-check" && return 0
+        has_npm_script "types" && echo "npm run types" && return 0
+        [[ -f "$PROJECT_ROOT/tsconfig.json" ]] && command -v tsc &>/dev/null && echo "tsc --noEmit" && return 0
+        ;;
+    esac
+  elif [[ -f "$PROJECT_ROOT/pyproject.toml" ]] || [[ -f "$PROJECT_ROOT/setup.py" ]] || [[ -f "$PROJECT_ROOT/requirements.txt" ]]; then
+    # Python
+    case "$cmd_type" in
+      lint) echo "ruff check ."; return 0 ;;
+      test) echo "pytest -v"; return 0 ;;
+      typecheck) echo "mypy ."; return 0 ;;
+      build) echo "pip install -e ."; return 0 ;;
+      dev)
+        if [[ -f "$PROJECT_ROOT/app.py" ]] || [[ -f "$PROJECT_ROOT/application.py" ]]; then
+          echo "flask run --debug"; return 0
+        elif command -v uvicorn &>/dev/null && [[ -f "$PROJECT_ROOT/main.py" ]]; then
+          echo "uvicorn main:app --reload"; return 0
+        elif [[ -f "$PROJECT_ROOT/main.py" ]]; then
+          echo "python main.py"; return 0
+        fi ;;
+    esac
+  elif [[ -f "$PROJECT_ROOT/Cargo.toml" ]]; then
+    # Rust
+    case "$cmd_type" in
+      lint) echo "cargo clippy -- -D warnings"; return 0 ;;
+      test) echo "cargo test"; return 0 ;;
+      typecheck) echo "cargo check"; return 0 ;;
+      build) echo "cargo build --release"; return 0 ;;
+      dev) echo "cargo run"; return 0 ;;
+    esac
+  elif [[ -f "$PROJECT_ROOT/go.mod" ]]; then
+    # Go
+    case "$cmd_type" in
+      lint)
+        if command -v golangci-lint &>/dev/null; then
+          echo "golangci-lint run"
+        else
+          echo "go vet ./..."
+        fi
+        return 0 ;;
+      test) echo "go test -v ./..."; return 0 ;;
+      typecheck) echo "go build ./..."; return 0 ;;
+      build) echo "go build -o bin/ ./..."; return 0 ;;
+      dev) echo "go run ."; return 0 ;;
+    esac
+  elif [[ -f "$PROJECT_ROOT/Gemfile" ]]; then
+    # Ruby
+    case "$cmd_type" in
+      lint) echo "bundle exec rubocop"; return 0 ;;
+      test) echo "bundle exec rspec"; return 0 ;;
+      build) echo "bundle install"; return 0 ;;
+    esac
+  fi
+
+  # No command found
+  return 1
+}
+
+# Check if a command exists for given type
+has_cmd() {
+  local cmd_type="$1"
+  get_cmd "$cmd_type" >/dev/null 2>&1
 }
 
 # Verify the project builds successfully
 # Returns 0 on success, 1 on failure
+# Args: task_id [has_scoped_tests]
 verify_build() {
   local task_id="$1"
+  local has_scoped_tests="${2:-false}"
   local log_file="$LOGS_DIR/${task_id}-build.log"
 
   # Ensure log directory exists
   mkdir -p "$LOGS_DIR" 2>/dev/null || true
 
-  # Skip if not a Node project
-  if [[ ! -f "package.json" ]]; then
-    log_info "No package.json - skipping build verification"
+  # Check if any supported stack exists
+  if ! has_cmd "lint" && ! has_cmd "test" && ! has_cmd "build"; then
+    log_warn "No supported stack detected - skipping build verification"
     return 0
   fi
 
@@ -2279,34 +2681,55 @@ verify_build() {
   if [[ "${VERIFY_LINT:-true}" == "true" ]]; then
     log_info "Running lint..."
 
-    if has_npm_script "lint"; then
+    local lint_cmd
+    if lint_cmd=$(get_cmd "lint"); then
       set +e
-      lint_output=$(npm run lint 2>&1)
+      lint_output=$(eval "$lint_cmd" 2>&1)
       local lint_exit=$?
       set -e
 
       if [[ $lint_exit -eq 0 ]]; then
         log_success "✅ Lint PASSED"
       else
-        # Lint failed - could be errors or warnings exceeding max-warnings
-        # Count actual error lines (format: "file:line:col  error  message")
-        local error_lines=$(echo "$lint_output" | grep -cE "^\s*[0-9]+:[0-9]+\s+error\s" || echo "0")
-        # Also check for summary line like "X errors"
-        local summary_errors=$(echo "$lint_output" | grep -oE "[0-9]+ errors?" | head -1 | grep -oE "[0-9]+" || echo "0")
+        # Lint failed - count errors from various linter formats
+        # ESLint: "file:line:col  error  message" or "X errors"
+        # Ruff/Pylint: "file.py:line:col: E501 message" or "Found X errors"
+        # Clippy: "error[E0001]: message"
+        local error_count=0
 
-        if [[ "$error_lines" -gt 0 || "$summary_errors" -gt 0 ]]; then
-          local total_errors=$((error_lines > summary_errors ? error_lines : summary_errors))
-          log_error "❌ Lint FAILED ($total_errors errors)"
+        # Try multiple patterns to extract error count from various linter formats
+        # ESLint/standard style: "X error(s)" in summary line
+        local summary_match=$(echo "$lint_output" | grep -oE "[0-9]+ errors?" | head -1 | grep -oE "[0-9]+" || echo "")
+        if [[ -n "$summary_match" ]]; then
+          error_count=$summary_match
+        fi
+
+        # Ruff/Python style: "Found X error(s)" summary
+        if [[ $error_count -eq 0 ]]; then
+          summary_match=$(echo "$lint_output" | grep -oE "Found [0-9]+ error" | grep -oE "[0-9]+" || echo "")
+          [[ -n "$summary_match" ]] && error_count=$summary_match
+        fi
+
+        # Fallback: count lines matching file:line:col format (works with most linters)
+        if [[ $error_count -eq 0 ]]; then
+          # Count lines containing file:line patterns (common to all linters)
+          error_count=$(echo "$lint_output" | grep -cE "^[^:]+:[0-9]+:" || echo "0")
+        fi
+
+        if [[ "$error_count" -gt 0 ]]; then
+          log_error "❌ Lint FAILED ($error_count errors)"
           lint_passed=false
           # Show first few error lines
-          echo "$lint_output" | grep -E "error" | head -5 | while read -r line; do
+          echo "$lint_output" | grep -E "^[^:]+:[0-9]+:|error|Error" | head -5 | while read -r line; do
             log_error "   $line"
           done
         else
-          # Lint failed but no errors found - likely max-warnings exceeded
-          log_warn "⚠️ Lint failed (likely max-warnings exceeded)"
-          log_warn "   This may indicate too many warnings - consider fixing them"
-          # Don't fail the task for warnings, but log it
+          # Lint failed but couldn't parse error count
+          log_error "❌ Lint FAILED"
+          lint_passed=false
+          echo "$lint_output" | head -5 | while read -r line; do
+            log_error "   $line"
+          done
         fi
       fi
 
@@ -2325,9 +2748,10 @@ verify_build() {
   if [[ "${VERIFY_TYPECHECK:-true}" == "true" ]]; then
     log_info "Running typecheck..."
 
-    if has_npm_script "typecheck"; then
+    local typecheck_cmd
+    if typecheck_cmd=$(get_cmd "typecheck"); then
       set +e
-      typecheck_output=$(npm run typecheck 2>&1)
+      typecheck_output=$(eval "$typecheck_cmd" 2>&1)
       local typecheck_exit=$?
       set -e
 
@@ -2336,11 +2760,12 @@ verify_build() {
       else
         log_error "❌ TypeCheck FAILED"
         typecheck_passed=false
-        # Extract error count
-        local error_count=$(echo "$typecheck_output" | grep -c "error TS" || echo "unknown")
-        log_error "   TypeScript errors: $error_count"
+        # Count lines containing "error" (case-insensitive) - works for TypeScript and most type checkers
+        local error_count
+        error_count=$(echo "$typecheck_output" | grep -ciE "error" || echo "0")
+        log_error "   Type errors: $error_count"
         # Show first few errors
-        echo "$typecheck_output" | grep "error TS" | head -5 | while read -r line; do
+        echo "$typecheck_output" | grep -iE "error" | head -5 | while read -r line; do
           log_error "   $line"
         done
       fi
@@ -2351,27 +2776,8 @@ verify_build() {
         echo "$typecheck_output"
         echo ""
       } >> "$log_file"
-
-    elif [[ -f "tsconfig.json" ]] && command -v tsc &>/dev/null; then
-      set +e
-      typecheck_output=$(tsc --noEmit 2>&1)
-      local typecheck_exit=$?
-      set -e
-
-      if [[ $typecheck_exit -eq 0 ]]; then
-        log_success "✅ TypeCheck PASSED (tsc --noEmit)"
-      else
-        log_error "❌ TypeCheck FAILED (tsc --noEmit)"
-        typecheck_passed=false
-      fi
-
-      {
-        echo "=== TypeCheck Output (tsc) ==="
-        echo "$typecheck_output"
-        echo ""
-      } >> "$log_file"
     else
-      log_info "⏭️ TypeCheck skipped (no typecheck script)"
+      log_info "⏭️ TypeCheck skipped (no typecheck command)"
     fi
   fi
 
@@ -2379,9 +2785,10 @@ verify_build() {
   if [[ "${VERIFY_BUILD:-true}" == "true" ]]; then
     log_info "Running build..."
 
-    if has_npm_script "build"; then
+    local build_cmd
+    if build_cmd=$(get_cmd "build"); then
       set +e
-      build_output=$(npm run build 2>&1)
+      build_output=$(eval "$build_cmd" 2>&1)
       local build_exit=$?
       set -e
 
@@ -2403,23 +2810,35 @@ verify_build() {
         echo ""
       } >> "$log_file"
     else
-      log_info "⏭️ Build skipped (no build script)"
+      log_info "⏭️ Build skipped (no build command)"
     fi
   fi
 
   # Step 3: Run Tests (CRITICAL for TDD verification)
-  if [[ "${VERIFY_TESTS:-true}" == "true" ]]; then
+  # Skip global tests if --scoped-tests-only and task has its own test verification
+  if [[ "${SCOPED_TESTS_ONLY:-false}" == "true" && "$has_scoped_tests" == "true" ]]; then
+    log_info "⏭️ Skipping global tests (task has scoped test verification)"
+  elif [[ "${VERIFY_TESTS:-true}" == "true" ]]; then
     log_info "Running tests..."
 
-    if has_npm_script "test"; then
+    local test_cmd
+    if test_cmd=$(get_cmd "test"); then
       set +e
       local test_output
-      test_output=$(npm run test 2>&1)
+      test_output=$(eval "$test_cmd" 2>&1)
       local test_exit=$?
       set -e
 
       if [[ $test_exit -eq 0 ]]; then
-        log_success "✅ Tests PASSED"
+        # Sanity check: verify tests actually ran (prevents false positives from empty test suites)
+        local tests_ran
+        tests_ran=$(echo "$test_output" | grep -oE '[0-9]+ (passed|passing)' | grep -oE '^[0-9]+' | head -1 || echo "")
+        if [[ -z "$tests_ran" || "$tests_ran" -eq 0 ]]; then
+          log_warn "⚠️ Tests passed but 0 tests detected - check verification command"
+          log_warn "   This may indicate a misconfigured test command"
+        else
+          log_success "✅ Tests PASSED ($tests_ran tests)"
+        fi
       else
         log_error "❌ Tests FAILED"
         tests_passed=false
@@ -2446,27 +2865,25 @@ verify_build() {
   local ran_build=false
   local ran_tests=false
 
-  if [[ "${VERIFY_LINT:-true}" == "true" ]] && has_npm_script "lint"; then
+  if [[ "${VERIFY_LINT:-true}" == "true" ]] && has_cmd "lint"; then
     ran_lint=true
   fi
 
-  if [[ "${VERIFY_TYPECHECK:-true}" == "true" ]]; then
-    if has_npm_script "typecheck" || { [[ -f "tsconfig.json" ]] && command -v tsc &>/dev/null; }; then
-      ran_typecheck=true
-    fi
+  if [[ "${VERIFY_TYPECHECK:-true}" == "true" ]] && has_cmd "typecheck"; then
+    ran_typecheck=true
   fi
 
-  if [[ "${VERIFY_BUILD:-true}" == "true" ]] && has_npm_script "build"; then
+  if [[ "${VERIFY_BUILD:-true}" == "true" ]] && has_cmd "build"; then
     ran_build=true
   fi
 
-  if [[ "${VERIFY_TESTS:-true}" == "true" ]] && has_npm_script "test"; then
+  if [[ "${VERIFY_TESTS:-true}" == "true" ]] && has_cmd "test"; then
     ran_tests=true
   fi
 
   if [[ "$ran_lint" == "false" && "$ran_typecheck" == "false" && "$ran_build" == "false" && "$ran_tests" == "false" ]]; then
-    log_warn "⚠️ No verification was performed (no lint, typecheck, build, or test scripts found)"
-    log_warn "   Consider adding these scripts to package.json"
+    log_warn "⚠️ No verification was performed (no lint, typecheck, build, or test commands found)"
+    log_warn "   Consider adding a Makefile with lint/test/build targets"
   fi
 
   # Step 4: Check for suspicious changes (anti-pattern detection)
@@ -2779,30 +3196,21 @@ The orchestrator will detect these patterns and REJECT the task.
 Before outputting TASK_COMPLETE, you MUST run the task verification
 commands listed in this task's Verification section and they MUST pass.
 
-Before outputting TASK_COMPLETE, you MUST run these commands and they MUST pass:
-
-\`\`\`bash
-# 1. Lint - catches code quality issues
-npm run lint 2>&1
-
-# 2. TypeCheck - catches type errors, missing imports, interface mismatches
-npm run typecheck 2>&1 || tsc --noEmit 2>&1
-
-# 3. Build - catches compilation errors that dev mode misses
-npm run build 2>&1
-
-# 4. Tests - verifies functionality (CRITICAL for TDD)
-npm test 2>&1
-\`\`\`
+Before outputting TASK_COMPLETE, you MUST run the project's verification commands.
+Check for a Makefile (make lint, make test, make build) or use the project's native tools:
+- Node.js: npm run lint, npm run typecheck, npm run build, npm test
+- Python: ruff check ., mypy ., pytest -v
+- Rust: cargo clippy, cargo check, cargo build, cargo test
+- Go: go vet ./..., go build ./..., go test ./...
 
 **If ANY command fails, DO NOT output TASK_COMPLETE.**
 Instead, fix the errors and re-run until all pass.
 
 Common issues to watch for:
-- Missing required props on components
-- Type mismatches between files
+- Type mismatches or missing type annotations
 - Imports from non-existent files
-- Interface changes that break callers
+- Interface/signature changes that break callers
+- Failing tests
 
 The orchestrator will verify the build after you report completion.
 If the build fails, your task will be marked as FAILED even if you said TASK_COMPLETE.
@@ -2944,6 +3352,9 @@ main() {
 
   print_status
 
+  # Reset any stale IN_PROGRESS beads left over from previous crashed/aborted runs
+  reset_stale_in_progress_beads
+
   local tasks_completed=0
   for ((i=1; i<=MAX_ITERATIONS; i++)); do
     # Check MAX_TASKS limit
@@ -2956,6 +3367,12 @@ main() {
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     log_info "ITERATION $i of $MAX_ITERATIONS"
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+    # Sync external fixes before each iteration
+    if git diff --quiet 2>/dev/null && git diff --cached --quiet 2>/dev/null; then
+      # No staged or unstaged changes - safe to pull
+      git pull --rebase origin "$(git rev-parse --abbrev-ref HEAD)" 2>/dev/null || true
+    fi
 
     # SELF-HEAL: Check for stalled tasks and recover them
     if [[ "${SELF_HEAL:-true}" == "true" ]]; then
@@ -2985,32 +3402,109 @@ main() {
     local task_json=$(get_next_task)
     
     if [[ -z "$task_json" || "$task_json" == "null" ]]; then
-      # Check if all done or all blocked
+      # Check if all done, all blocked, or some failed
       local pending=$(count_tasks "pending")
       local completed=$(count_tasks "completed")
-      
+      local failed=$(count_tasks "failed")
+
       if [[ "$pending" -eq 0 ]]; then
-        echo ""
-        log_success "╔════════════════════════════════════════════════════╗"
-        log_success "║          🎉 ALL TASKS COMPLETED! 🎉                ║"
-        log_success "╚════════════════════════════════════════════════════╝"
-        print_status
+        # No pending tasks - either all completed or some failed
+        if [[ "$failed" -eq 0 ]]; then
+          # Run full E2E regression suite before declaring success
+          if [[ "$FINAL_E2E" == "true" ]]; then
+            local e2e_cmd=""
+            if has_npm_script "test:e2e"; then
+              e2e_cmd="npm run test:e2e"
+            elif has_npm_script "e2e"; then
+              e2e_cmd="npm run e2e"
+            elif [[ -f "$PROJECT_ROOT/playwright.config.ts" ]] || [[ -f "$PROJECT_ROOT/playwright.config.js" ]]; then
+              e2e_cmd="npx playwright test"
+            fi
 
-        # Final summary to progress file
-        {
-          echo ""
-          echo "---"
-          echo "## Session Complete - $(date -Iseconds)"
-          echo ""
-          echo "- All tasks completed successfully!"
-          echo "- Iterations used: $i"
-          echo "- Total completed: $(count_tasks 'completed')"
-          echo "- Build failures during session: $BUILD_FAIL_COUNT"
-          echo ""
-        } >> "$PROGRESS_FILE"
+            if [[ -n "$e2e_cmd" ]]; then
+              echo ""
+              log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+              log_info "FINAL E2E REGRESSION SUITE"
+              log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+              log_info "Running: $e2e_cmd"
+              echo ""
 
-        echo "<promise>COMPLETE</promise>"
-        exit 0
+              set +e
+              eval "$e2e_cmd"
+              local e2e_rc=$?
+              set -e
+
+              if [[ $e2e_rc -ne 0 ]]; then
+                echo ""
+                log_error "╔════════════════════════════════════════════════════╗"
+                log_error "║     FINAL E2E SUITE FAILED - REGRESSIONS FOUND     ║"
+                log_error "╚════════════════════════════════════════════════════╝"
+                log_error "All tasks completed but full E2E suite found regressions."
+                log_error "Fix E2E failures before pushing."
+
+                {
+                  echo ""
+                  echo "---"
+                  echo "## Session Failed E2E - $(date -Iseconds)"
+                  echo ""
+                  echo "- Tasks completed: $completed"
+                  echo "- Final E2E suite: FAILED"
+                  echo "- Regressions detected in full test suite"
+                  echo ""
+                } >> "$PROGRESS_FILE"
+
+                exit 1
+              fi
+              log_success "Full E2E regression suite passed!"
+            fi
+          fi
+
+          echo ""
+          log_success "╔════════════════════════════════════════════════════╗"
+          log_success "║          ALL TASKS COMPLETED SUCCESSFULLY          ║"
+          log_success "╚════════════════════════════════════════════════════╝"
+          print_status
+
+          # Final summary to progress file
+          {
+            echo ""
+            echo "---"
+            echo "## Session Complete - $(date -Iseconds)"
+            echo ""
+            echo "- All tasks completed successfully!"
+            echo "- Iterations used: $i"
+            echo "- Total completed: $completed"
+            echo "- Build failures during session: $BUILD_FAIL_COUNT"
+            echo ""
+          } >> "$PROGRESS_FILE"
+
+          echo "<promise>COMPLETE</promise>"
+          exit 0
+        else
+          # Some tasks failed, no pending tasks left
+          echo ""
+          log_warn "╔════════════════════════════════════════════════════╗"
+          log_warn "║          SESSION ENDED - SOME TASKS FAILED         ║"
+          log_warn "╚════════════════════════════════════════════════════╝"
+          print_status
+
+          # Final summary to progress file
+          {
+            echo ""
+            echo "---"
+            echo "## Session Ended - $(date -Iseconds)"
+            echo ""
+            echo "- Status: Some tasks failed"
+            echo "- Completed: $completed"
+            echo "- Failed: $failed"
+            echo "- Iterations used: $i"
+            echo "- Build failures during session: $BUILD_FAIL_COUNT"
+            echo ""
+            echo "Review failed tasks before retrying."
+          } >> "$PROGRESS_FILE"
+
+          exit 1
+        fi
       else
         log_warn "All remaining tasks are blocked. Check dependencies."
         print_status
@@ -3022,7 +3516,8 @@ main() {
           echo "## Session Blocked - $(date -Iseconds)"
           echo ""
           echo "- Status: All remaining tasks are blocked"
-          echo "- Completed: $(count_tasks 'completed')"
+          echo "- Completed: $completed"
+          echo "- Failed: $failed"
           echo "- Pending (blocked): $pending"
           echo "- Build failures: $BUILD_FAIL_COUNT"
           echo ""
@@ -3066,7 +3561,7 @@ main() {
     local prompt=$(generate_prompt "$task_json")
     
     # Save prompt for debugging
-    echo "$prompt" > "/tmp/ralph-prompt-$task_id.md"
+    echo "$prompt" > "${TMPDIR:-/tmp}/ralph-prompt-$task_id.md"
     
     # Set current task for logging
     CURRENT_TASK_ID="$task_id"
@@ -3079,33 +3574,72 @@ main() {
     log_info "Log file: $LOGS_DIR/${task_id}.log"
     update_loop_state "running" "implement" 1 "started"
 
+    local start_time=$(date +%s)
     set +e
     OUTPUT=$(run_with_tool "$selected_tool" "$prompt")
     local tool_rc=$?
     set -e
+    local end_time=$(date +%s)
+    local elapsed_total_seconds=$((end_time - start_time))
+    local elapsed_minutes=$((elapsed_total_seconds / 60))
+    local elapsed_seconds=$((elapsed_total_seconds % 60))
 
     # Handle tool failures (including timeouts)
     if [[ "$tool_rc" -ne 0 ]]; then
       local fail_reason="tool exit code $tool_rc"
-      if [[ "$tool_rc" -eq 124 ]]; then
-        fail_reason="timeout after ${STALL_MINUTES}m"
-        log_error "Tool timed out after ${STALL_MINUTES} minutes."
-        update_loop_state "timeout" "implement" 1 "timed out"
-      else
-        log_error "Tool failed with exit code $tool_rc"
-        update_loop_state "failed" "implement" 1 "tool failed (rc=$tool_rc)"
-      fi
+      local output_size=${#OUTPUT}
 
-      handle_task_failure "$task_id" "$subject" "$selected_tool" "$i" "$fail_reason" "tool failed (rc=$tool_rc)"
-
-      if [[ "$CONTINUE_ON_ERROR" == "true" ]]; then
-        log_warn "Task failed. Waiting 30s before next task..."
-        sleep 30
-        CURRENT_TASK_ID=""
-        continue
+      # Check if output contains TASK_COMPLETE despite error exit code
+      # This can happen if process is killed after completing work
+      if echo "$OUTPUT" | grep -q "<promise>TASK_COMPLETE</promise>"; then
+        log_warn "Process exited with rc=$tool_rc but output contains TASK_COMPLETE"
+        log_warn "Elapsed: ${elapsed_minutes}m ${elapsed_seconds}s - attempting to process as success"
+        # Don't treat as failure - fall through to success handling below
       else
-        log_error "Stopping due to tool failure. Use --continue-on-error to keep going."
-        exit 1
+        # Detect signal-based exit codes
+        # 124 = GNU timeout command exit code
+        # 137 = 128+9 = SIGKILL
+        # 143 = 128+15 = SIGTERM
+        if [[ "$tool_rc" -eq 124 ]]; then
+          # Exit code 124 is specifically from the timeout command
+          fail_reason="timeout after ${elapsed_minutes}m ${elapsed_seconds}s (rc=124)"
+          log_error "Tool timed out after ${elapsed_minutes}m ${elapsed_seconds}s (timeout command)"
+          update_loop_state "timeout" "implement" 1 "timed out"
+        elif [[ "$tool_rc" -eq 137 ]] || [[ "$tool_rc" -eq 143 ]]; then
+          # Signal-based termination - could be timeout OR external kill
+          local timeout_threshold=$(( STALL_MINUTES * 60 - 60 ))  # Within 1 min of timeout
+          if [[ "$elapsed_total_seconds" -ge "$timeout_threshold" ]]; then
+            fail_reason="timeout after ${elapsed_minutes}m ${elapsed_seconds}s (signal, rc=$tool_rc)"
+            log_error "Tool likely timed out after ${elapsed_minutes}m ${elapsed_seconds}s (exit code $tool_rc)"
+            update_loop_state "timeout" "implement" 1 "timed out"
+          else
+            fail_reason="killed by signal after ${elapsed_minutes}m ${elapsed_seconds}s (rc=$tool_rc)"
+            log_error "Tool killed by signal after ${elapsed_minutes}m ${elapsed_seconds}s (exit code $tool_rc)"
+            log_error "This was NOT a timeout - process was killed externally or crashed"
+            update_loop_state "failed" "implement" 1 "killed by signal"
+          fi
+
+          # Check if output is empty/minimal
+          if [[ "$output_size" -lt 100 ]]; then
+            log_error "EMPTY OUTPUT DETECTED - CLI may have hung during startup"
+            fail_reason="${fail_reason}, no output"
+          fi
+        else
+          log_error "Tool failed with exit code $tool_rc after ${elapsed_minutes}m ${elapsed_seconds}s"
+          update_loop_state "failed" "implement" 1 "tool failed (rc=$tool_rc)"
+        fi
+
+        handle_task_failure "$task_id" "$subject" "$selected_tool" "$i" "$fail_reason" "tool failed (rc=$tool_rc)"
+
+        if [[ "$CONTINUE_ON_ERROR" == "true" ]]; then
+          log_warn "Task failed. Waiting 30s before next task..."
+          sleep 30
+          CURRENT_TASK_ID=""
+          continue
+        else
+          log_error "Stopping due to tool failure. Use --continue-on-error to keep going."
+          exit 1
+        fi
       fi
     fi
 
@@ -3116,6 +3650,13 @@ main() {
       log_info "Agent reports task complete. Verifying build..."
 
       # CRITICAL: Run task-specific verification BEFORE any reviews
+      # Re-read verification commands in case they were updated during iteration
+      local fresh_verification
+      fresh_verification=$(refresh_task_verification "$task_id")
+      if [[ -n "$fresh_verification" ]]; then
+        task_verification="$fresh_verification"
+      fi
+
       if ! run_task_verification "$task_id" "$task_verification"; then
         log_error "Task-specific verification FAILED"
         handle_task_failure "$task_id" "$subject" "$selected_tool" "$i" "task verification" "verification failed"
@@ -3126,10 +3667,33 @@ main() {
 
       # CRITICAL: Verify build BEFORE any reviews
       # This catches TypeScript errors, broken imports, and integration issues
-      if ! verify_build "$task_id"; then
+      local has_scoped_tests="false"
+      if [[ -n "$task_verification" ]] && echo "$task_verification" | grep -qiE "test|spec|jest|vitest|playwright"; then
+        has_scoped_tests="true"
+      fi
+      if ! verify_build "$task_id" "$has_scoped_tests"; then
         # Build failed - task is NOT complete despite agent's claim
         log_error "Build verification FAILED - task is NOT complete!"
         log_error "The agent said TASK_COMPLETE but the code doesn't compile."
+
+        # Check for flaky test pattern (same failure repeated)
+        local build_log="$LOGS_DIR/${task_id}-build.log"
+        local error_output=""
+        [[ -f "$build_log" ]] && error_output=$(cat "$build_log")
+
+        if check_flaky_skip "$task_id" "$error_output"; then
+          # Flaky failure detected - task marked as blocked, skip to next
+          clear_task_tracking "$task_id"
+          {
+            echo ""
+            echo "### Iteration $i - $(date -Iseconds)"
+            echo "- Task: $task_id - $subject"
+            echo "- Status: ⚠️ BLOCKED (flaky test - $FLAKY_FAIL_THRESHOLD identical failures)"
+          } >> "$PROGRESS_FILE"
+          print_status
+          sleep 2
+          continue
+        fi
 
         # Mark task as failed (not completed!)
         mark_task_failed "$task_id"
@@ -3202,7 +3766,7 @@ main() {
       # RE-VERIFY after reviews (Healer may have modified code)
       if [[ "$ran_reviews" == "true" ]]; then
         log_info "Re-verifying build after reviews..."
-        if ! verify_build "$task_id"; then
+        if ! verify_build "$task_id" "$has_scoped_tests"; then
           log_error "Post-review verification FAILED!"
           log_error "Reviews may have introduced issues."
           mark_task_failed "$task_id"

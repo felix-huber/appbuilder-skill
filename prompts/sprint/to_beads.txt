@@ -1,5 +1,13 @@
 Transform the sprint plan below into beads_rust (br) commands.
 
+STACK ADAPTATION:
+Examples below use Node.js/TypeScript syntax. Adapt verification commands for your stack:
+- **Node.js**: npm test, npm run build, npm run typecheck
+- **Python**: pytest -v, ruff check ., mypy ., pip install -e .
+- **Rust**: cargo test, cargo build --release, cargo clippy
+- **Go**: go test ./..., go build ./..., go vet ./...
+- **Ruby**: bundle exec rspec, bundle exec rubocop
+
 CRITICAL: SELF-DOCUMENTING BEADS
 Each bead must be so detailed that we NEVER need to consult the original plan.
 Include in EVERY bead description:
@@ -8,6 +16,26 @@ Include in EVERY bead description:
 - VERIFICATION: Exact commands to verify completion
 - DEPENDENCIES: What must be done first and why
 - IMPLEMENTATION NOTES: Gotchas, patterns to follow, edge cases
+
+VERIFICATION COMMAND RULES (CRITICAL - bad commands waste iterations):
+1. ONLY executable shell commands - no descriptive text like "CI artifacts show X"
+2. Use simple commands: `npm test` not `npm test -- --grep 'pattern'` (avoid filter syntax)
+3. No parentheses in commands: `npm test` not `npm test (file.test.ts)`
+4. Vitest uses `-t` not `--grep` for filtering (common mistake)
+5. Verify npm scripts exist in package.json before using them
+6. When in doubt, use the simplest command: `npm test`, `pytest -v`, `cargo test`
+
+BAD verification examples (will fail):
+- `Manual test` (not a command)
+- `CI artifacts show memory traces` (descriptive text)
+- `npm test (size-warnings.test.ts)` (shell syntax error)
+- `npm run test -- --grep 'pattern'` (Vitest uses -t not --grep)
+
+GOOD verification examples:
+- `npm test`
+- `npm run build && npm run typecheck`
+- `pytest -v`
+- `cargo test`
 
 FOR FEATURE BEADS ONLY (not setup/chore/E2E beads):
 - UNIT TEST SPECS: Specific test cases to write FIRST (TDD)

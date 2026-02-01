@@ -2,7 +2,7 @@
 # oracle_converge.sh - FULLY AUTOMATED Oracle convergence loop
 #
 # This script runs in your terminal and handles EVERYTHING:
-# 1. Runs Oracle (30-90 min per iteration)
+# 1. Runs Oracle through each lens (30-90 min per lens per iteration)
 # 2. Reads issues AND suggestions
 # 3. Calls Claude Code to apply fixes (with fresh-eyes review)
 # 4. Re-runs Oracle
@@ -10,18 +10,50 @@
 #
 # Usage:
 #   ./scripts/oracle_converge.sh prd artifacts/01-prd.md artifacts/00-brief.md
-#   ./scripts/oracle_converge.sh ux artifacts/02-ux.md artifacts/01-prd.md
-#   ./scripts/oracle_converge.sh plan artifacts/03-plan.md artifacts/01-prd.md artifacts/02-ux.md
+#   ./scripts/oracle_converge.sh --lens product prd artifacts/01-prd.md    # Single lens
+#   ./scripts/oracle_converge.sh --lens all ux artifacts/02-ux.md          # All lenses (default)
 #
 # Convergence rules:
-#   - STOP when: blockers + majors == 0
+#   - STOP when: blockers + majors == 0 for current lens
 #   - STOP when: rounds >= MAX_ROUNDS (default: 10)
 #   - Suggestions are shown but don't block convergence
 
 set -e
 
 MAX_ROUNDS="${MAX_ROUNDS:-10}"
-LENS="${LENS:-product}"  # Single lens for iteration speed (can override with LENS env var)
+
+# All available lenses
+ALL_LENSES=(product ux architecture security performance tests simplicity ops)
+
+# Parse arguments
+LENS_ARG=""  # Empty = ask user
+INTERACTIVE=true
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --lens)
+      if [[ -z "${2:-}" ]] || [[ "$2" == --* ]]; then
+        echo "ERROR: --lens requires a value (lens name or 'all')"
+        exit 1
+      fi
+      LENS_ARG="$2"
+      INTERACTIVE=false
+      shift 2
+      ;;
+    --quick)
+      LENS_ARG="product"
+      INTERACTIVE=false
+      shift
+      ;;
+    --all)
+      LENS_ARG="all"
+      INTERACTIVE=false
+      shift
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
 
 KIND="${1:-}"
 PRIMARY_FILE="${2:-}"
@@ -46,17 +78,98 @@ print_box() {
 }
 
 if [ -z "$KIND" ] || [ -z "$PRIMARY_FILE" ]; then
-  echo "Usage: $0 <kind> <primary_file> [context_files...]"
+  echo "Usage: $0 [--lens <lens|all>] <kind> <primary_file> [context_files...]"
   echo ""
   echo "Examples:"
-  echo "  $0 prd artifacts/01-prd.md artifacts/00-brief.md"
-  echo "  $0 ux artifacts/02-ux.md artifacts/01-prd.md"
-  echo "  $0 plan artifacts/03-plan.md artifacts/01-prd.md artifacts/02-ux.md"
+  echo "  $0 prd artifacts/01-prd.md artifacts/00-brief.md              # Interactive"
+  echo "  $0 --lens product prd artifacts/01-prd.md artifacts/00-brief.md  # Single lens"
+  echo "  $0 --lens all ux artifacts/02-ux.md artifacts/01-prd.md          # Explicit all"
+  echo ""
+  echo "Options:"
+  echo "  --quick         Quick mode: product lens only (~1-2 hours)"
+  echo "  --all           Full mode: all 8 lenses (~4-16 hours)"
+  echo "  --lens <lens>   Run specific lens (30-90 min per lens)"
+  echo "                  Lenses: product, ux, architecture, security,"
+  echo "                          performance, tests, simplicity, ops"
   echo ""
   echo "Environment variables:"
-  echo "  MAX_ROUNDS=10   Maximum iterations (default: 10)"
-  echo "  LENS=product    Which lens to use (default: product)"
+  echo "  MAX_ROUNDS=10   Max iterations per lens (default: 10)"
   exit 1
+fi
+
+# Interactive mode: ask user which mode they want
+if [ "$INTERACTIVE" = true ] && [ -z "$LENS_ARG" ]; then
+  echo ""
+  echo "╔═══════════════════════════════════════════════════════════════════════╗"
+  echo "║                    ORACLE REVIEW MODE SELECTION                       ║"
+  echo "╠═══════════════════════════════════════════════════════════════════════╣"
+  echo "║                                                                       ║"
+  echo "║  [1] QUICK MODE - Product lens only                                   ║"
+  echo "║      • Time: ~1-2 hours                                               ║"
+  echo "║      • Best for: Fast iteration, early drafts                         ║"
+  echo "║                                                                       ║"
+  echo "║  [2] FULL MODE - All 8 lenses with convergence                        ║"
+  echo "║      • Time: ~4-16 hours (overnight recommended)                      ║"
+  echo "║      • Best for: Final review before implementation                   ║"
+  echo "║      • Lenses: product, ux, architecture, security,                   ║"
+  echo "║                performance, tests, simplicity, ops                    ║"
+  echo "║                                                                       ║"
+  echo "║  [3] SINGLE LENS - Choose one specific lens                           ║"
+  echo "║      • Time: ~30-90 min per convergence round                         ║"
+  echo "║                                                                       ║"
+  echo "╚═══════════════════════════════════════════════════════════════════════╝"
+  echo ""
+  echo -n "Select mode [1/2/3]: "
+  read -r MODE_CHOICE
+
+  case "$MODE_CHOICE" in
+    1)
+      LENS_ARG="product"
+      echo -e "${GREEN}→ Quick mode selected (product lens only)${NC}"
+      ;;
+    2)
+      LENS_ARG="all"
+      echo -e "${GREEN}→ Full mode selected (all 8 lenses)${NC}"
+      ;;
+    3)
+      echo ""
+      echo "Available lenses:"
+      for i in "${!ALL_LENSES[@]}"; do
+        echo "  $((i+1)). ${ALL_LENSES[i]}"
+      done
+      echo ""
+      echo -n "Select lens [1-8]: "
+      read -r LENS_CHOICE
+      if [[ "$LENS_CHOICE" =~ ^[1-8]$ ]]; then
+        LENS_ARG="${ALL_LENSES[$((LENS_CHOICE-1))]}"
+        echo -e "${GREEN}→ Single lens selected: $LENS_ARG${NC}"
+      else
+        echo -e "${RED}Invalid choice. Using quick mode (product).${NC}"
+        LENS_ARG="product"
+      fi
+      ;;
+    *)
+      echo -e "${YELLOW}Invalid choice. Using quick mode (product).${NC}"
+      LENS_ARG="product"
+      ;;
+  esac
+  echo ""
+fi
+
+# Build lens list based on --lens argument
+if [ "$LENS_ARG" = "all" ]; then
+  LENSES_TO_RUN=("${ALL_LENSES[@]}")
+else
+  # Validate single lens
+  VALID_LENS=false
+  for l in "${ALL_LENSES[@]}"; do
+    [ "$l" = "$LENS_ARG" ] && VALID_LENS=true && break
+  done
+  if [ "$VALID_LENS" = false ]; then
+    echo -e "${RED}ERROR: Invalid lens '$LENS_ARG'. Valid lenses: ${ALL_LENSES[*]}${NC}"
+    exit 1
+  fi
+  LENSES_TO_RUN=("$LENS_ARG")
 fi
 
 # Check dependencies
@@ -85,64 +198,75 @@ done
 # Setup
 OUTPUT_DIR="artifacts/06-oracle/$KIND"
 mkdir -p "$OUTPUT_DIR"
-HISTORY_FILE="$OUTPUT_DIR/convergence-history.json"
 
-# Check for existing state - resume if possible
-RESUME_ROUND=1
-if [ -f "$HISTORY_FILE" ]; then
-  # Check if there's existing progress
-  EXISTING_ROUNDS=$(jq -r '.rounds | length' "$HISTORY_FILE" 2>/dev/null || echo "0")
-  if [ "$EXISTING_ROUNDS" -gt 0 ]; then
-    LAST_ROUND=$(jq -r '.rounds[-1]' "$HISTORY_FILE" 2>/dev/null)
-    LAST_BLOCKERS=$(echo "$LAST_ROUND" | jq -r '.blockers // 999')
-    LAST_MAJORS=$(echo "$LAST_ROUND" | jq -r '.majors // 999')
-    
-    # Check if already converged (0 blockers AND 0 majors per CLAUDE.md)
-    if [ "$LAST_BLOCKERS" -eq 0 ] && [ "$LAST_MAJORS" -eq 0 ]; then
-      echo -e "${GREEN}✅ Already converged! (0 blockers, 0 majors)${NC}"
-      echo "   Previous runs found in: $OUTPUT_DIR"
-      echo ""
-      echo "To force a fresh run, delete $HISTORY_FILE first."
-      exit 0
-    fi
-    
-    # Resume from next round
-    RESUME_ROUND=$((EXISTING_ROUNDS + 1))
-    echo -e "${YELLOW}📍 Resuming from round $RESUME_ROUND (found $EXISTING_ROUNDS previous rounds)${NC}"
-    echo "   Last state: $LAST_BLOCKERS blockers, $LAST_MAJORS majors"
-    echo ""
-  fi
-else
-  echo '{"rounds": []}' > "$HISTORY_FILE"
-fi
-
-print_box "ORACLE CONVERGENCE LOOP v2.1"
+print_box "ORACLE CONVERGENCE LOOP v2.2"
 echo ""
 echo "  Kind:       $KIND"
 echo "  Primary:    $PRIMARY_FILE"
 echo "  Context:    ${CONTEXT_FILES[*]:-none}"
-echo "  Max rounds: $MAX_ROUNDS"
-echo "  Lens:       $LENS"
+echo "  Max rounds: $MAX_ROUNDS per lens"
+echo "  Lenses:     ${LENSES_TO_RUN[*]}"
 echo ""
 echo -e "  ${GREEN}✓ Oracle will AUTO-OPEN Chromium and start immediately${NC}"
-echo -e "  ${YELLOW}  Each round: Oracle (30-90 min) + Apply fixes + Fresh-eyes review${NC}"
-echo -e "  ${YELLOW}  Total time estimate: 2-12 hours depending on issues${NC}"
+echo -e "  ${YELLOW}  Each lens: Oracle (30-90 min/round) + Apply fixes until converged${NC}"
+if [ "${#LENSES_TO_RUN[@]}" -gt 1 ]; then
+  echo -e "  ${YELLOW}  Total time estimate: ${#LENSES_TO_RUN[@]}-$((${#LENSES_TO_RUN[@]} * 4)) hours (${#LENSES_TO_RUN[@]} lenses)${NC}"
+fi
 echo ""
 echo -e "  ${CYAN}💡 Tip: Keep Chromium window open. Go grab a coffee! ☕${NC}"
 echo ""
 
-# Convergence history
-declare -a HISTORY
+# Track overall progress
+TOTAL_LENSES=${#LENSES_TO_RUN[@]}
+CONVERGED_LENSES=0
+LENS_INDEX=0
 
-ROUND=$RESUME_ROUND
-PREV_BLOCKING=999
+# Outer loop: each lens
+for LENS in "${LENSES_TO_RUN[@]}"; do
+  LENS_INDEX=$((LENS_INDEX + 1))
 
-while [ "$ROUND" -le "$MAX_ROUNDS" ]; do
-  print_box "ROUND $ROUND of $MAX_ROUNDS"
+  print_box "LENS $LENS_INDEX/$TOTAL_LENSES: $LENS"
+  echo ""
+
+  # Reset per-lens state
+  LENS_HISTORY_FILE="$OUTPUT_DIR/convergence-${LENS}.json"
+
+  # Check for existing lens state - resume if possible
+  RESUME_ROUND=1
+  if [ -f "$LENS_HISTORY_FILE" ]; then
+    EXISTING_ROUNDS=$(jq -r '.rounds | length' "$LENS_HISTORY_FILE" 2>/dev/null || echo "0")
+    if [ "$EXISTING_ROUNDS" -gt 0 ]; then
+      LAST_ROUND=$(jq -r '.rounds[-1]' "$LENS_HISTORY_FILE" 2>/dev/null)
+      LAST_BLOCKERS=$(echo "$LAST_ROUND" | jq -r '.blockers // 999')
+      LAST_MAJORS=$(echo "$LAST_ROUND" | jq -r '.majors // 999')
+
+      if [ "$LAST_BLOCKERS" -eq 0 ] && [ "$LAST_MAJORS" -eq 0 ]; then
+        echo -e "${GREEN}✅ Lens '$LENS' already converged! Skipping...${NC}"
+        CONVERGED_LENSES=$((CONVERGED_LENSES + 1))
+        continue
+      fi
+
+      RESUME_ROUND=$((EXISTING_ROUNDS + 1))
+      echo -e "${YELLOW}📍 Resuming lens '$LENS' from round $RESUME_ROUND${NC}"
+    fi
+  else
+    echo '{"lens": "'"$LENS"'", "rounds": []}' > "$LENS_HISTORY_FILE"
+  fi
+
+  # Convergence history for this lens (reset each lens iteration)
+  HISTORY=()
+
+  ROUND=$RESUME_ROUND
+  PREV_BLOCKING=999
+  STUCK_COUNT=0  # Track consecutive rounds with same blocking count
+
+  # Inner loop: convergence for this lens
+  while [ "$ROUND" -le "$MAX_ROUNDS" ]; do
+    print_box "LENS: $LENS | ROUND $ROUND of $MAX_ROUNDS"
   
-  TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-  OUTPUT_FILE="$OUTPUT_DIR/${TIMESTAMP}_${LENS}.md"
-  ISSUES_FILE="$OUTPUT_DIR/issues-round${ROUND}.json"
+    TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+    OUTPUT_FILE="$OUTPUT_DIR/${TIMESTAMP}_${LENS}.md"
+    ISSUES_FILE="$OUTPUT_DIR/issues-${LENS}-round${ROUND}.json"
   
   # Build file arguments as array (safe for paths with spaces)
   FILE_ARGS_ARRAY=("--file" "$PRIMARY_FILE")
@@ -182,10 +306,11 @@ while [ "$ROUND" -le "$MAX_ROUNDS" ]; do
       --browser-no-cookie-sync \
       --model gpt-5.2-pro \
       --timeout auto \
-      --browser-attachments never \
+      --browser-attachments auto \
+      --force \
       --prompt "$(cat "$PROMPT_FILE")" \
       "${FILE_ARGS_ARRAY[@]}" \
-      --write-output "$OUTPUT_FILE" 2>&1 | tee "$OUTPUT_DIR/oracle-round${ROUND}-attempt${ATTEMPT}.log"
+      --write-output "$OUTPUT_FILE" 2>&1 | tee "$OUTPUT_DIR/oracle-${LENS}-round${ROUND}-attempt${ATTEMPT}.log"
     ORACLE_EXIT=${PIPESTATUS[0]}
     set -e
     
@@ -215,15 +340,29 @@ while [ "$ROUND" -le "$MAX_ROUNDS" ]; do
     echo "Manual fallback - run in terminal:"
     echo ""
     echo "  npx -y @steipete/oracle --render --copy-markdown \\"
-    echo "    --prompt \"\$(cat $PROMPT_FILE)\" \\"
-    echo "    ${FILE_ARGS_ARRAY[*]}"
+    echo "    --prompt \"\$(cat '$PROMPT_FILE')\" \\"
+    # Build properly quoted file arguments for display
+    QUOTED_FILE_ARGS=""
+    for arg in "${FILE_ARGS_ARRAY[@]}"; do
+      if [[ "$arg" == --* ]]; then
+        QUOTED_FILE_ARGS="$QUOTED_FILE_ARGS $arg"
+      else
+        QUOTED_FILE_ARGS="$QUOTED_FILE_ARGS \"$arg\""
+      fi
+    done
+    echo "   $QUOTED_FILE_ARGS"
     echo ""
     echo "Then paste into ChatGPT (GPT-5.2 Pro) and save response to:"
     echo "  $OUTPUT_FILE"
     echo ""
-    echo "After saving, press ENTER to continue..."
-    read -r
-    
+    echo "After saving, press ENTER to continue (or type 'skip' to skip this lens)..."
+    read -r USER_RESPONSE
+
+    if [ "$USER_RESPONSE" = "skip" ]; then
+      echo -e "${YELLOW}Skipping lens '$LENS' as requested.${NC}"
+      break
+    fi
+
     # Check if file was created manually
     if [ ! -f "$OUTPUT_FILE" ] || [ ! -s "$OUTPUT_FILE" ]; then
       echo -e "${RED}ERROR: Output file still missing or empty: $OUTPUT_FILE${NC}"
@@ -238,10 +377,11 @@ while [ "$ROUND" -le "$MAX_ROUNDS" ]; do
   echo ""
   echo -e "${BLUE}📊 Phase 2: Parsing results...${NC}"
   
-  # Try to extract JSON from output
+  # Try to extract JSON from output (takes first json block only)
   if [ -f "$OUTPUT_FILE" ]; then
-    # Extract JSON block from markdown output
-    sed -n '/```json/,/```/p' "$OUTPUT_FILE" | sed '1d;$d' > "$ISSUES_FILE" 2>/dev/null || true
+    # Extract first JSON block from markdown output
+    # Uses awk to stop after first complete block, avoiding concatenation of multiple blocks
+    awk '/```json/{found=1; next} found && /```/{exit} found{print}' "$OUTPUT_FILE" > "$ISSUES_FILE" 2>/dev/null || true
   fi
   
   # Count issues
@@ -269,9 +409,15 @@ while [ "$ROUND" -le "$MAX_ROUNDS" ]; do
   # Record history
   HISTORY+=("Round $ROUND: $BLOCKERS blocker, $MAJORS major, $MINORS minor, $NITS nit | $SUGGESTIONS suggestions | confidence: $CONFIDENCE")
   
-  # Update history file
+  # Update lens-specific history file (with error handling for malformed JSON)
   if command -v jq &> /dev/null; then
-    jq ".rounds += [{\"round\": $ROUND, \"blockers\": $BLOCKERS, \"majors\": $MAJORS, \"minors\": $MINORS, \"nits\": $NITS, \"suggestions\": $SUGGESTIONS, \"confidence\": $CONFIDENCE}]" "$HISTORY_FILE" > "$HISTORY_FILE.tmp" && mv "$HISTORY_FILE.tmp" "$HISTORY_FILE"
+    if jq ".rounds += [{\"round\": $ROUND, \"blockers\": $BLOCKERS, \"majors\": $MAJORS, \"minors\": $MINORS, \"nits\": $NITS, \"suggestions\": $SUGGESTIONS, \"confidence\": $CONFIDENCE}]" "$LENS_HISTORY_FILE" > "$LENS_HISTORY_FILE.tmp" 2>/dev/null; then
+      mv "$LENS_HISTORY_FILE.tmp" "$LENS_HISTORY_FILE"
+    else
+      echo -e "${YELLOW}Warning: Could not update history file, reinitializing...${NC}"
+      rm -f "$LENS_HISTORY_FILE.tmp"
+      echo "{\"lens\": \"$LENS\", \"rounds\": [{\"round\": $ROUND, \"blockers\": $BLOCKERS, \"majors\": $MAJORS, \"minors\": $MINORS, \"nits\": $NITS, \"suggestions\": $SUGGESTIONS, \"confidence\": $CONFIDENCE}]}" > "$LENS_HISTORY_FILE"
+    fi
   fi
   
   echo ""
@@ -288,87 +434,52 @@ while [ "$ROUND" -le "$MAX_ROUNDS" ]; do
   printf "│  Ready:      %-46s │\n" "$READY"
   echo "└─────────────────────────────────────────────────────────────┘"
   
-  # Check convergence
+  # Check convergence for this lens
   if [ "$BLOCKING" -eq 0 ]; then
-    print_box "✅ CONVERGED after $ROUND round(s)!"
+    print_box "✅ LENS '$LENS' CONVERGED after $ROUND round(s)!"
     echo ""
-    echo -e "${GREEN}No blockers or major issues remaining.${NC}"
+    echo -e "${GREEN}No blockers or major issues remaining for $LENS lens.${NC}"
     if [ "$MINORS" -gt 0 ] || [ "$NITS" -gt 0 ]; then
       echo "Deferred: $MINORS minor(s), $NITS nit(s)"
     fi
-    if [ "$SUGGESTIONS" -gt 0 ]; then
-      echo -e "${CYAN}Suggestions available: $SUGGESTIONS (review in $ISSUES_FILE)${NC}"
-    fi
     echo ""
-    echo "Convergence History:"
+    echo "Lens History:"
     for h in "${HISTORY[@]}"; do
       echo "  $h"
     done
     echo ""
-    echo -e "${GREEN}Overall confidence: $CONFIDENCE/10${NC}"
-    echo ""
-    echo "Next step:"
-    case "$KIND" in
-      prd) echo -e "  ${GREEN}/ux${NC} - Generate UX specification" ;;
-      ux)  echo -e "  ${GREEN}/plan${NC} - Generate implementation plan" ;;
-      plan) 
-        echo -e "  ${GREEN}Auto-compiling task graph...${NC}"
-        echo ""
-        # Auto-run artifact-tasks for plan convergence
-        if command -v node &> /dev/null && [ -f "scripts/compile_task_graph.js" ]; then
-          echo "Compiling task graph..."
-          node scripts/compile_task_graph.js \
-            --plan artifacts/03-plan.md \
-            --issues "$ISSUES_FILE" \
-            --out artifacts/04-task-graph.json 2>/dev/null || true
-          
-          if [ -f "artifacts/04-task-graph.json" ]; then
-            TASK_COUNT=$(jq '.tasks | length' artifacts/04-task-graph.json 2>/dev/null || echo "?")
-            echo -e "  ${GREEN}✅ Task graph compiled: $TASK_COUNT tasks${NC}"
-          fi
-        fi
-        echo ""
-        echo "Next steps:"
-        echo -e "  1. ${GREEN}bash artifacts/04-beads-setup.sh${NC}  # Create beads from tasks"
-        echo -e "  2. ${GREEN}/review beads${NC}                     # Run 6-9 times!"
-        echo -e "  3. ${GREEN}./scripts/ralph.sh --beads --fresh-eyes 100${NC}"
-        ;;
-      code) echo -e "  ${GREEN}/gates${NC} - Run quality gates" ;;
-    esac
-    echo ""
-    
-    # Copy final issues
-    [ -f "$ISSUES_FILE" ] && cp "$ISSUES_FILE" "$OUTPUT_DIR/issues.json"
-    exit 0
+    CONVERGED_LENSES=$((CONVERGED_LENSES + 1))
+    [ -f "$ISSUES_FILE" ] && cp "$ISSUES_FILE" "$OUTPUT_DIR/issues-${LENS}.json"
+    break  # Exit inner loop, continue to next lens
   fi
   
-  # Check if stuck (same blocking count 3 times)
-  if [ "$BLOCKING" -eq "$PREV_BLOCKING" ] && [ "$ROUND" -gt 2 ]; then
+  # Check if stuck (same blocking count for multiple consecutive rounds)
+  if [ "$BLOCKING" -eq "$PREV_BLOCKING" ]; then
+    STUCK_COUNT=$((STUCK_COUNT + 1))
+  else
+    STUCK_COUNT=0
+  fi
+
+  if [ "$STUCK_COUNT" -ge 2 ]; then
     echo ""
-    echo -e "${YELLOW}⚠️  Same number of blocking issues for 2+ rounds.${NC}"
+    echo -e "${YELLOW}⚠️  Same number of blocking issues ($BLOCKING) for $((STUCK_COUNT + 1)) consecutive rounds.${NC}"
     echo "   This may indicate false positives or unresolvable issues."
     echo ""
   fi
   PREV_BLOCKING=$BLOCKING
   
   if [ "$ROUND" -eq "$MAX_ROUNDS" ]; then
-    print_box "⚠️  MAX ROUNDS ($MAX_ROUNDS) reached"
+    print_box "⚠️  LENS '$LENS' MAX ROUNDS ($MAX_ROUNDS) reached"
     echo ""
-    echo -e "${YELLOW}Remaining: $BLOCKERS blocker(s), $MAJORS major(s)${NC}"
+    echo -e "${YELLOW}Remaining for $LENS: $BLOCKERS blocker(s), $MAJORS major(s)${NC}"
     echo ""
-    echo "Convergence History:"
+    echo "Lens History:"
     for h in "${HISTORY[@]}"; do
       echo "  $h"
     done
     echo ""
-    echo "Options:"
-    echo "  1. Review remaining issues manually (may be false positives)"
-    echo "  2. Increase rounds: MAX_ROUNDS=15 $0 $KIND $PRIMARY_FILE ${CONTEXT_FILES[*]}"
-    echo "  3. Proceed anyway if issues are edge cases"
-    echo ""
-    
-    [ -f "$ISSUES_FILE" ] && cp "$ISSUES_FILE" "$OUTPUT_DIR/issues.json"
-    exit 1
+    [ -f "$ISSUES_FILE" ] && cp "$ISSUES_FILE" "$OUTPUT_DIR/issues-${LENS}.json"
+    break  # Move to next lens even if not converged
   fi
   
   # Apply fixes
@@ -376,7 +487,7 @@ while [ "$ROUND" -le "$MAX_ROUNDS" ]; do
   echo -e "${BLUE}📝 Phase 3: Apply fixes via Claude Code...${NC}"
   echo ""
   echo "════════════════════════════════════════════════════════════════"
-  echo "  APPLY FEEDBACK"
+  echo "  APPLY FEEDBACK FOR LENS: $LENS"
   echo "════════════════════════════════════════════════════════════════"
   echo ""
   echo "In Claude Code, run:"
@@ -392,10 +503,73 @@ while [ "$ROUND" -le "$MAX_ROUNDS" ]; do
   echo ""
   echo -e "${YELLOW}Press ENTER when fixes are applied to continue to round $((ROUND + 1))...${NC}"
   read -r
-  
-  ROUND=$((ROUND + 1))
-done
 
+  ROUND=$((ROUND + 1))
+  done  # End inner while loop (rounds for this lens)
+
+done  # End outer for loop (each lens)
+
+# Final summary
 echo ""
-echo -e "${RED}ERROR: Should not reach here${NC}"
-exit 1
+print_box "ALL LENSES COMPLETE"
+echo ""
+echo "  Converged: $CONVERGED_LENSES / $TOTAL_LENSES lenses"
+echo "  Output:    $OUTPUT_DIR/"
+echo ""
+
+# Merge all lens issues into combined issues.json
+if command -v jq &> /dev/null; then
+  LENS_FILES=("$OUTPUT_DIR"/issues-*.json)
+  if [ -e "${LENS_FILES[0]}" ]; then
+    echo "Merging all lens issues..."
+    # Use unique_by with fallback for issues without title field
+    jq -s '{
+      issues: [.[].issues[]?] | unique_by(.title // .description // .id // (. | tostring)),
+      suggestions: [.[].suggestions[]?] | unique
+    }' "${LENS_FILES[@]}" > "$OUTPUT_DIR/issues.json" 2>/dev/null || echo -e "${YELLOW}Warning: Could not merge issues files${NC}"
+  fi
+fi
+
+if [ "$CONVERGED_LENSES" -eq "$TOTAL_LENSES" ]; then
+  echo -e "${GREEN}✅ ALL LENSES CONVERGED!${NC}"
+  echo ""
+  echo "Next step:"
+  case "$KIND" in
+    prd) echo -e "  ${GREEN}/ux${NC} - Generate UX specification" ;;
+    ux)  echo -e "  ${GREEN}/plan${NC} - Generate implementation plan" ;;
+    plan)
+      echo -e "  ${GREEN}Auto-compiling task graph...${NC}"
+      if command -v node &> /dev/null && [ -f "scripts/compile_task_graph.js" ]; then
+        node scripts/compile_task_graph.js \
+          --plan artifacts/03-plan.md \
+          --issues "$OUTPUT_DIR/issues.json" \
+          --out artifacts/04-task-graph.json 2>/dev/null || true
+
+        if [ -f "artifacts/04-task-graph.json" ]; then
+          TASK_COUNT=$(jq '.tasks | length' artifacts/04-task-graph.json 2>/dev/null || echo "?")
+          echo -e "  ${GREEN}✅ Task graph compiled: $TASK_COUNT tasks${NC}"
+        fi
+      fi
+      echo ""
+      echo "Next steps:"
+      echo -e "  1. ${GREEN}bash artifacts/04-beads-setup.sh${NC}  # Create beads from tasks"
+      echo -e "  2. ${GREEN}/review beads${NC}                     # Run 6-9 times!"
+      echo -e "  3. ${GREEN}./scripts/ralph.sh --beads --fresh-eyes 100${NC}"
+      ;;
+    code) echo -e "  ${GREEN}/gates${NC} - Run quality gates" ;;
+  esac
+  exit 0
+else
+  echo -e "${YELLOW}⚠️  Some lenses did not converge (hit max rounds).${NC}"
+  echo ""
+  echo "Options:"
+  echo "  1. Review remaining issues manually (may be false positives)"
+  # Build properly quoted command suggestions
+  CONTEXT_ARGS=""
+  for f in "${CONTEXT_FILES[@]}"; do
+    CONTEXT_ARGS="$CONTEXT_ARGS \"$f\""
+  done
+  echo "  2. Increase rounds: MAX_ROUNDS=15 $0 --lens all $KIND \"$PRIMARY_FILE\"$CONTEXT_ARGS"
+  echo "  3. Re-run specific lens: $0 --lens <lens> $KIND \"$PRIMARY_FILE\"$CONTEXT_ARGS"
+  exit 1
+fi

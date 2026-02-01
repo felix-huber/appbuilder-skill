@@ -45,10 +45,11 @@ git status --short
 
 ### Claude Code
 ```bash
-claude -p --dangerously-skip-permissions "<prompt>"
+claude -p --dangerously-skip-permissions --no-session-persistence "<prompt>"
 ```
 - `-p` / `--print`: Non-interactive mode, output to stdout
 - `--dangerously-skip-permissions`: Skip all approval prompts (YOLO mode)
+- `--no-session-persistence`: Ensures synchronous execution when stdout is redirected
 
 ### Codex CLI
 ```bash
@@ -147,7 +148,7 @@ Use `--beads` or `--no-beads` to skip interactive selection.
 
 | Variable | Description |
 |----------|-------------|
-| `CLAUDE_CMD` | Custom Claude Code command (default: `claude -p --dangerously-skip-permissions`) |
+| `CLAUDE_CMD` | Custom Claude Code command (default: `claude -p --dangerously-skip-permissions --no-session-persistence`) |
 | `CODEX_CMD` | Custom Codex command (default: `codex exec --yolo`) |
 | `FRESH_EYES` | `"true"` to enable fresh-eyes review |
 | `SELF_HEAL` | `"false"` to disable self-healing |

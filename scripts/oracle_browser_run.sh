@@ -56,7 +56,8 @@ echo ""
 # --browser-manual-login uses persistent Chromium profile (no cookie sync needed)
 # --browser-no-cookie-sync explicitly disables Keychain access
 # --timeout auto uses 60m for gpt-5.2-pro
-# --browser-attachments never forces inline pasting (more reliable)
+# --browser-attachments auto allows file uploads when beneficial
+# --force skips confirmation prompts
 set +e
 npx -y @steipete/oracle \
   --engine browser \
@@ -64,7 +65,8 @@ npx -y @steipete/oracle \
   --browser-no-cookie-sync \
   --model gpt-5.2-pro \
   --timeout auto \
-  --browser-attachments never \
+  --browser-attachments auto \
+  --force \
   --prompt "$PROMPT_CONTENT" \
   "${FILE_ARGS[@]}" \
   --write-output "$OUTPUT_FILE" \

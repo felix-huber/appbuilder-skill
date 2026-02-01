@@ -248,6 +248,15 @@ appbuilder-skill/
 │   └── PLAN.template.md
 ├── skills/                       # Skill documentation
 ├── tools/                        # Web tools (task board, etc.)
+├── tasks/                        # Session-level tracking
+│   ├── lessons.md               # Learnings from mistakes
+│   └── todo.md                  # Current session plan
+├── reference-specs/              # Exemplary planning documents
+│   ├── USAGE.md                 # How to use reference specs
+│   ├── frankentui-plan.md       # Rust TUI (invariants, ADRs)
+│   ├── flywheel-gateway-plan.md # TypeScript/Bun platform
+│   ├── jeffreysprompts-webapp-plan.md  # Next.js/React webapp
+│   └── ...                      # 9 specs total (~35k lines)
 ├── CLAUDE.md                     # Agent instructions
 ├── AGENTS.md                     # Multi-agent coordination
 └── package.json
@@ -268,6 +277,8 @@ appbuilder-skill/
 | `/oracle <type>` | Run Oracle review (prd/ux/plan/code) |
 | `/ralph` | Start autonomous execution |
 | `/review` | Run final review suite |
+| `/fix-ci` | Automatically fix failing CI tests |
+| `/techdebt` | Scan and report technical debt |
 | `/ship` | Prepare release |
 | `/board` | Open task board UI |
 
@@ -336,8 +347,8 @@ br stats && br list --status in_progress
 ### Environment Variables
 
 ```bash
-# Custom Claude command
-export CLAUDE_CMD="claude -p --dangerously-skip-permissions"
+# Custom Claude command (default includes --no-session-persistence for synchronous execution)
+export CLAUDE_CMD="claude -p --dangerously-skip-permissions --no-session-persistence"
 
 # Custom Codex command  
 export CODEX_CMD="codex exec --yolo"

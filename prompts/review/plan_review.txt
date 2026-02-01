@@ -1,0 +1,35 @@
+Review the session plan in tasks/todo.md with fresh eyes.
+
+Check for:
+
+1. **Completeness**
+   - Are all steps necessary to achieve the goal listed?
+   - Are there implicit steps that should be explicit?
+   - Is the verification strategy clear?
+
+2. **Clarity**
+   - Would another engineer understand what each step means?
+   - Are there ambiguous terms that need definition?
+   - Is the scope well-bounded?
+
+3. **Ordering**
+   - Are dependencies between steps correct?
+   - Could any steps be parallelized?
+   - Is the critical path identified?
+
+4. **Risk**
+   - What could go wrong at each step?
+   - Are there fallback plans for risky steps?
+   - Are there integration points that need extra attention?
+
+5. **Verification**
+   - How will we know each step is complete?
+   - What tests or checks prove success?
+   - Is "done" clearly defined?
+
+For each issue found:
+- Describe the problem
+- Suggest a specific fix
+- Apply the fix to tasks/todo.md
+
+Continue until no more issues are found.

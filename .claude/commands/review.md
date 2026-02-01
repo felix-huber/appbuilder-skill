@@ -9,6 +9,7 @@ Run the specified review type multiple times until convergence, tracking iterati
 ```
 
 Where `<type>` is one of:
+- `plan` — Review session plan in tasks/todo.md (run 2-3 times)
 - `beads` — Review beads structure and content (run 6-9 times)
 - `code` — Fresh eyes code review (run until no bugs)
 - `bugs` — Random code exploration bug hunt (run 2-3 times)
@@ -20,6 +21,7 @@ Where `<type>` is one of:
 
 | Type | Default Passes | Stop Condition |
 |------|----------------|----------------|
+| plan | 2 | No gaps found |
 | beads | 6 | No changes made |
 | code | 3 | No bugs found |
 | bugs | 3 | No bugs found |
@@ -124,6 +126,24 @@ Pass 3: No issues found
 CONVERGED after 3 passes ✓
 ```
 
+### Plan Review (before implementation)
+```
+/review plan
+```
+Output:
+```
+Reviewing current plan in tasks/todo.md...
+
+Pass 1:
+- Plan is too vague for step 2
+- Missing error handling consideration
+- Revised: Added specifics
+
+Pass 2: Plan looks solid. Ready to implement.
+
+CONVERGED after 2 passes ✓
+```
+
 ## Integration with Workflow
 
 ### After Plan Review
@@ -150,6 +170,7 @@ CONVERGED after 3 passes ✓
 ## Prompts Used
 
 All prompts are in `prompts/review/`:
+- `plan_review.txt` — Session plan review
 - `beads_review.txt` — Beads structure review
 - `fresh_eyes.txt` — Code self-review
 - `bug_hunt.txt` — Random exploration bug hunt
@@ -163,4 +184,4 @@ All prompts are in `prompts/review/`:
 2. **Log everything** — Iteration tracking is essential for methodology
 3. **Converge before proceeding** — Don't move to next phase until stable
 4. **"ultrathink"** — Use extended reasoning mode when available
-5. **Fresh eyes** — After context compaction, re-read AGENTS.md first
+5. **Fresh eyes** — After context compaction, re-read CLAUDE.md first

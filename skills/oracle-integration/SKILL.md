@@ -1,6 +1,6 @@
 ---
 name: oracle-integration
-description: Provides Oracle CLI integration for GPT-5.2 Pro review loops. Use when running external model reviews, multi-model consensus, or structured issue extraction from Oracle outputs.
+description: Oracle CLI integration for GPT-5.2 Pro review loops. Runs external model reviews with structured issue extraction.
 triggers:
   - oracle review
   - gpt-5 review
@@ -13,178 +13,173 @@ triggers:
 
 # Oracle Integration Skill
 
-Integrate GPT-5.2 Pro reviews into your development workflow via the Oracle CLI.
+GPT-5.2 Pro reviews via browser automation. Bundles artifacts, runs specialized lenses, outputs structured issues.
 
-## Overview
+## Key Facts
 
-Oracle bundles your artifacts and runs them through GPT-5.2 Pro (browser mode) with specialized review lenses. This skill guides the integration process.
-
-## Key Principles
-
-1. **Browser mode only**: Oracle runs use your ChatGPT session, not API (cheaper, fully automated)
-2. **8 specialized lenses**: product, ux, architecture, security, performance, tests, simplicity, ops
-3. **Structured output**: All reviews produce normalized `issues.json` with consistent schema
-4. **Fully autonomous**: Run Oracle scripts directly - DO NOT ask user to run commands
+- **Browser mode only** - uses your ChatGPT session, not API
+- **8 lenses** - product, ux, architecture, security, performance, tests, simplicity, ops
+- **Per-lens convergence** - each lens tracked in `convergence-${LENS}.json`
+- **Auto-resume** - script continues from last round if interrupted
 
 ---
 
-## ⚠️ MANDATORY FIRST STEP — CHECK EXISTING STATE ⚠️
-
-**BEFORE running any Oracle script, ALWAYS check what already exists:**
+## Before Running: Check Existing State
 
 ```bash
-# 1. What Oracle output exists?
-ls -la artifacts/06-oracle/<kind>/ 2>/dev/null || echo "No Oracle output yet"
+# What exists?
+ls -la artifacts/06-oracle/<kind>/ 2>/dev/null
 
-# 2. Convergence state?
-cat artifacts/06-oracle/<kind>/convergence-history.json 2>/dev/null || echo "No history"
+# Per-lens convergence state?
+cat artifacts/06-oracle/<kind>/convergence-product.json 2>/dev/null
 
-# 3. Latest feedback files?
+# Latest outputs?
 ls -t artifacts/06-oracle/<kind>/*.md 2>/dev/null | head -3
 ```
 
-**Decision tree:**
-
-| Check Result | Action |
-|--------------|--------|
-| No Oracle output | → Run Oracle |
-| Converged (0 blockers, ≤2 majors) | → **DONE!** No action needed |
-| Unapplied feedback exists | → **Apply feedback first**, then reassess |
-| Applied but not converged | → Run another Oracle round |
-
-**How to tell if feedback is unapplied:**
-- Oracle files newer than artifact
-- Issues in Oracle output still visible in artifact
+**Decision:**
+| State | Action |
+|-------|--------|
+| No output | Run Oracle |
+| Lens converged (0 blockers/majors) | Skip that lens |
+| Unapplied feedback | Apply first, then reassess |
+| Partially converged | Script auto-resumes |
 
 ---
 
-## STEP 1: Run Oracle (only if needed per above)
+## Running Oracle
 
-**DO NOT ask the user to run commands.** Execute directly:
+### oracle_converge.sh (Primary)
 
+**Interactive (default):**
 ```bash
-# Run this directly - DO NOT print and ask user to run
-./scripts/oracle_converge.sh ux artifacts/02-ux.md artifacts/01-prd.md
+./scripts/oracle_converge.sh prd artifacts/01-prd.md artifacts/00-brief.md
+```
+Shows menu:
+```
+[1] QUICK MODE - Product lens only
+    Time: ~1-2 hours
+
+[2] FULL MODE - All 8 lenses with convergence
+    Time: ~4-16 hours (overnight recommended)
+
+[3] SINGLE LENS - Choose one specific lens
+    Time: ~30-90 min per convergence round
 ```
 
-**This takes 60-90 minutes.** The script:
-1. Calls GPT-5.2 Pro via browser automation
-2. GPT-5.2 Pro has extended thinking (30-60 min silence is normal)
-3. Returns structured feedback
-4. Loops until convergence (0 blockers, ≤2 majors)
+**Non-interactive flags:**
+```bash
+# Quick: product lens only
+./scripts/oracle_converge.sh --quick prd artifacts/01-prd.md
 
-## Oracle CLI Reference
+# Full: all 8 lenses
+./scripts/oracle_converge.sh --all prd artifacts/01-prd.md
 
-### Full Lens Pack
-Run all 8 lenses for a phase:
+# Single specific lens
+./scripts/oracle_converge.sh --lens architecture prd artifacts/01-prd.md
+```
+
+**Time estimates:**
+| Mode | Flag | Time | Use Case |
+|------|------|------|----------|
+| Quick | `--quick` | 1-2 hrs | Fast iteration, early drafts |
+| Full | `--all` | 4-16 hrs | Final review before implementation |
+| Single | `--lens X` | 30-90 min/round | Targeted review |
+
+**Environment:**
+- `MAX_ROUNDS=10` - max iterations per lens (default: 10)
+
+### Output Files
+
+```
+artifacts/06-oracle/<kind>/
+  convergence-product.json      # Per-lens history
+  convergence-architecture.json
+  issues-product.json           # Final issues for lens
+  issues-architecture.json
+  issues.json                   # Merged all-lens issues
+  20250201_143052_product.md    # Raw Oracle output
+```
+
+Per-lens history format:
+```json
+{
+  "lens": "product",
+  "rounds": [
+    {"round": 1, "blockers": 2, "majors": 1, "minors": 3, "nits": 5, "suggestions": 4, "confidence": 6},
+    {"round": 2, "blockers": 0, "majors": 0, "minors": 2, "nits": 4, "suggestions": 3, "confidence": 8}
+  ]
+}
+```
+
+### oracle_lens_pack.sh (Single Pass)
+
+All 8 lenses once, no convergence loop:
 ```bash
 ./scripts/oracle_lens_pack.sh <kind> <files...>
 ```
+Use for quick baseline scan without iterating.
 
-| Kind | Primary File | Context Files |
-|------|--------------|---------------|
-| prd | artifacts/01-prd.md | artifacts/00-brief.md |
-| ux | artifacts/02-ux.md | artifacts/01-prd.md |
-| plan | artifacts/03-plan.md | artifacts/01-prd.md, artifacts/02-ux.md |
-| code | (specific files) | artifacts/03-plan.md |
+### oracle_single_lens.sh (No Convergence)
 
-### Single Lens
-Run one specific lens:
+One lens, one pass:
 ```bash
 ./scripts/oracle_single_lens.sh <kind> <lens> <files...>
 ```
 
-Lenses: `product`, `ux`, `architecture`, `security`, `performance`, `tests`, `simplicity`, `ops`
-
-### Fallback (Manual Paste)
-If browser automation fails:
-```bash
-npx -y @steipete/oracle --render --copy-markdown \
-  --engine browser \
-  --browser-manual-login \
-  --browser-no-cookie-sync \
-  --model gpt-5.2-pro \
-  --prompt "$(cat prompts/<kind>/<lens>.txt)" \
-  --file "<files...>"
-```
-
-Then paste into ChatGPT (GPT-5.2 Pro) and save response to:
-`artifacts/06-oracle/<kind>/<timestamp>_<lens>.md`
+---
 
 ## Issue Schema
 
-All issues follow this structure:
 ```json
 {
   "id": "abc123",
   "severity": "blocker|major|minor|nit",
   "category": "product|ux|arch|security|perf|tests|simplicity|ops",
   "title": "Short description",
-  "evidence": "Quote or reference from artifact",
-  "recommendation": "Concrete change to make",
-  "acceptanceTest": "How to verify the fix",
-  "files": ["optional/affected/paths.ts"]
+  "evidence": "Quote from artifact",
+  "recommendation": "Concrete change",
+  "acceptanceTest": "How to verify fix",
+  "files": ["optional/paths.ts"]
 }
 ```
 
-## When to Use Oracle
+---
 
-| Situation | Action |
-|-----------|--------|
-| PRD complete, before UX | `/oracle prd` |
-| UX complete, before plan | `/oracle ux` |
-| Plan complete, before coding | `/oracle plan` |
-| Code complete, before gates | `/oracle code` |
-| Stuck on decision | Run specific lens for perspective |
-| Want second opinion | Run oracle on any artifact |
+## When to Use
 
-## Integration with Compound Engineering
+| Stage | Command |
+|-------|---------|
+| PRD done, before UX | `./scripts/oracle_converge.sh prd ...` |
+| UX done, before plan | `./scripts/oracle_converge.sh ux ...` |
+| Plan done, before coding | `./scripts/oracle_converge.sh plan ...` |
+| Code done, before gates | `./scripts/oracle_converge.sh code ...` |
+| Targeted review | `./scripts/oracle_converge.sh --lens <lens> ...` |
 
-Oracle complements Compound Engineering's Claude-native review:
-
-```
-┌─── Compound Engineering ───┐   ┌─── Oracle Extension ───┐
-│ /workflows:review          │   │ /oracle code           │
-│ 13 Claude agents parallel  │ + │ GPT-5.2 Pro external   │
-│ (security-sentinel, etc.)  │   │ (fresh perspective)    │
-└────────────────────────────┘   └────────────────────────┘
-```
+---
 
 ## Troubleshooting
 
-### Browser automation fails
-1. **Keep Chromium window OPEN** during Oracle runs
-2. Use `--browser-manual-login` (now default in Oracle Swarm)
-3. Log into ChatGPT in the Chromium window that opens
-4. Close other ChatGPT tabs
+**Browser automation fails:**
+1. Keep Chromium window open during runs
+2. Log into ChatGPT in the Chromium window
+3. Close other ChatGPT tabs
+4. Script retries 3 times before manual fallback
 
-### Setup: Persistent Chromium Profile (Recommended)
-
-Create `~/.oracle/config.json`:
+**Setup persistent profile** (`~/.oracle/config.json`):
 ```json
 {
   "browser": {
     "manualLogin": true,
     "noCookieSync": true,
-    "chromePath": "/Applications/Chromium.app/Contents/MacOS/Chromium",
-    "chromeProfile": null
+    "chromePath": "/Applications/Chromium.app/Contents/MacOS/Chromium"
   }
 }
 ```
 
-This:
-- Uses persistent profile at `~/.oracle/browser-profile`
-- No cookie sync (no Keychain prompts!)
-- Log in once, reuse forever
+**Issues not parsing:**
+```bash
+node scripts/normalize_oracle_output.js <dir> <out.json>
+```
 
-### Issues not parsing
-1. Check Oracle output for valid JSON in code fence
-2. Run normalizer manually:
-   ```bash
-   node scripts/normalize_oracle_output.js <dir> <out.json>
-   ```
-
-### Too many issues
-1. Focus on blockers and majors first
-2. Use single lens for specific concerns
-3. Increase issue quality by improving artifacts
+**Too many issues:** Focus on blockers/majors first. Use `--lens` for specific concerns.

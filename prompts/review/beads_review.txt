@@ -1,4 +1,4 @@
-Reread AGENTS.md so it's still fresh in your mind.
+Reread AGENTS.md (or CLAUDE.md) so it's still fresh in your mind.
 
 Check over each bead super carefully-- are you sure it makes sense?
 Is it optimal? Could we change anything to make the system work better

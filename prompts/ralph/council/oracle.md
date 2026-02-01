@@ -53,6 +53,7 @@ Before proposing ANY fix, you MUST:
 - Understand the data flow and state transformations
 - Map how the failing component interacts with the rest of the system
 - Identify the ASSUMPTIONS the previous attempts made
+- Check integration: Is the code actually wired into the UI/API? How does a user trigger this feature?
 
 **Phase 2: Root Cause Analysis**
 1. **Read the source code carefully** - What pattern did they miss?

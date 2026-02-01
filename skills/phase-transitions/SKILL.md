@@ -11,6 +11,10 @@ triggers:
   - converge
   - fresh eyes
   - beads review
+  - stuck
+  - sideways
+  - re-plan
+  - not working
 ---
 
 # Phase Transitions Skill
@@ -194,7 +198,7 @@ to add the dependencies to beads. Use ultrathink.
 ### Fresh Eyes Review (After Compaction or New Session)
 
 ```
-First read ALL of the AGENTS.md file and README.md file super carefully
+First read ALL of the AGENTS.md (or CLAUDE.md) file and README.md file super carefully
 and understand ALL of both! Then use your code investigation agent mode
 to fully understand the code, and technical architecture and purpose
 of the project. Use ultrathink.
@@ -210,7 +214,7 @@ I want you to very carefully review and analyze these using `br` and `bv`.
 ### Agent Init Prompt (Send to ALL agents)
 
 ```
-First read ALL of the AGENTS.md file and README.md file super carefully
+First read ALL of the AGENTS.md (or CLAUDE.md) file and README.md file super carefully
 and understand ALL of both!
 
 Then use your code investigation agent mode to fully understand the code,
@@ -231,6 +235,11 @@ just wrote and other existing code you just modified with "fresh eyes"
 looking super carefully for any obvious bugs, errors, problems, issues,
 confusion, etc.
 
+CRITICAL: Check integration! Trace the user flow end-to-end:
+- How does a user actually trigger this feature?
+- Is your new hook/component/util actually called from somewhere?
+- Creating code is NOT enough - it must be wired into the existing UI/API.
+
 Carefully fix anything you uncover. Use ultrathink.
 ```
 
@@ -239,7 +248,7 @@ Carefully fix anything you uncover. Use ultrathink.
 ### Next Bead Prompt
 
 ```
-Reread AGENTS.md so it's still fresh in your mind. Use ultrathink.
+Reread AGENTS.md (or CLAUDE.md) so it's still fresh in your mind. Use ultrathink.
 
 Use `br ready --json` to find the most impactful bead(s) to work on next
 and then start on it.
@@ -280,9 +289,9 @@ check with "fresh eyes" to find any obvious bugs, problems, errors, issues,
 silly mistakes, etc. and then systematically and meticulously and
 intelligently correct them.
 
-Be sure to comply with ALL rules in AGENTS.md and ensure that any code
+Be sure to comply with ALL rules in AGENTS.md (or CLAUDE.md) and ensure that any code
 you write or revise conforms to the best practice guides referenced in
-the AGENTS.md file. Use ultrathink.
+that file. Use ultrathink.
 ```
 
 ### Test Coverage Check
@@ -395,6 +404,50 @@ echo "## Beads Review Iterations
 - Pass 4: Added implementation notes to 5 beads  
 - Pass 5: Minor description improvements
 - Pass 6: No changes (STABLE)" > .beads/iteration-log.md
+```
+
+---
+
+## RECOVERY: RE-PLAN WHEN SIDEWAYS
+
+When implementation goes wrong, don't push through. Stop and re-plan.
+
+### Detection Signals
+- Tests keep failing unexpectedly
+- Implementation feels hacky
+- Scope is expanding
+- You're unsure which direction to go
+- Same bug keeps coming back
+
+### Recovery Prompt
+
+```
+STOP. Things are going sideways.
+
+1. What was the original goal?
+2. What's actually happening?
+3. Where did it diverge?
+4. What's the root cause?
+
+Before continuing, create a new plan:
+- Write to tasks/todo.md
+- Document the lesson in tasks/lessons.md
+- Only proceed when the new plan is clear
+```
+
+### Document the Lesson
+
+Always add to `tasks/lessons.md`:
+```markdown
+## [YYYY-MM-DD] - Recovery
+
+**Mistake:** What went wrong
+
+**Pattern:** The underlying pattern that caused it
+
+**Rule:** The rule to prevent it
+
+**Files affected:** Where to apply this rule
 ```
 
 ---

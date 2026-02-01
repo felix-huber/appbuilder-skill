@@ -103,7 +103,7 @@ and add the dependencies. Use ultrathink.
 This is the exact Doodlestein prompt. Run it repeatedly until no changes are made:
 
 ```
-Reread AGENTS.md so it's still fresh in your mind.
+Reread AGENTS.md (or CLAUDE.md) so it's still fresh in your mind.
 
 Check over each bead super carefully-- are you sure it makes sense?
 Is it optimal? Could we change anything to make the system work better
@@ -165,7 +165,7 @@ When Claude Code compacts context or you want fresh perspective:
 ### Phase 1: Re-orient
 
 ```
-First read ALL of the AGENTS.md file and README.md file super carefully
+First read ALL of the AGENTS.md (or CLAUDE.md) file and README.md file super carefully
 and understand ALL of both! Then use your code investigation agent mode
 to fully understand the code, and technical architecture and purpose
 of the project. Use ultrathink.
@@ -199,6 +199,11 @@ Great, now I want you to carefully read over all of the new code you
 just wrote and other existing code you just modified with "fresh eyes"
 looking super carefully for any obvious bugs, errors, problems, issues,
 confusion, etc.
+
+CRITICAL: Check integration! Trace the user flow end-to-end:
+- How does a user actually trigger this feature?
+- Is your new hook/component/util actually called from somewhere?
+- Creating code is NOT enough - it must be wired into the existing UI/API.
 
 Carefully fix anything you uncover. Use ultrathink.
 ```
@@ -238,9 +243,9 @@ check with "fresh eyes" to find any obvious bugs, problems, errors, issues,
 silly mistakes, etc. and then systematically and meticulously and
 intelligently correct them.
 
-Be sure to comply with ALL rules in AGENTS.md and ensure that any code
+Be sure to comply with ALL rules in AGENTS.md (or CLAUDE.md) and ensure that any code
 you write or revise conforms to the best practice guides referenced in
-the AGENTS.md file. Use ultrathink.
+that file. Use ultrathink.
 ```
 
 ---

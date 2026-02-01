@@ -4,6 +4,8 @@
 # This script uses agent-browser to test critical user journeys.
 # Happy paths (marked with ⭐ in artifacts/02-ux.md) are tested on every build.
 #
+# Supports multiple stacks: Node.js, Python/Flask, Rust, Go
+#
 # Prerequisites:
 #   npm install -g agent-browser
 #   agent-browser install
@@ -12,17 +14,16 @@
 #   ./scripts/run_e2e_happy_paths.sh
 #   ./scripts/run_e2e_happy_paths.sh --headed  # Show browser
 
-set -e
+set -euo pipefail
 
 HEADED=""
-if [[ "$1" == "--headed" ]]; then
+if [[ "${1:-}" == "--headed" ]]; then
   HEADED="--headed"
 fi
 
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
@@ -45,28 +46,152 @@ if ! command -v agent-browser &> /dev/null; then
   exit 1
 fi
 
-# Start dev server
-echo -e "${BLUE}Starting dev server...${NC}"
-npm run preview &
-SERVER_PID=$!
+# Detect stack and get dev server command + default port
+get_dev_server() {
+  # Makefile override
+  if [[ -f "Makefile" ]] && grep -q "^dev:" Makefile 2>/dev/null; then
+    echo "make dev"
+    return 0
+  fi
+  # Node.js
+  if [[ -f "package.json" ]]; then
+    if grep -q '"preview"' package.json 2>/dev/null; then
+      echo "npm run preview"
+    elif grep -q '"dev"' package.json 2>/dev/null; then
+      echo "npm run dev"
+    elif grep -q '"start"' package.json 2>/dev/null; then
+      echo "npm start"
+    else
+      echo "npm run dev"
+    fi
+    return 0
+  fi
+  # Python
+  if [[ -f "pyproject.toml" ]] || [[ -f "setup.py" ]] || [[ -f "requirements.txt" ]]; then
+    if [[ -f "app.py" ]] || [[ -f "application.py" ]]; then
+      echo "flask run --debug"
+    elif [[ -f "main.py" ]] && command -v uvicorn &>/dev/null; then
+      echo "uvicorn main:app --reload"
+    elif [[ -f "main.py" ]]; then
+      echo "python main.py"
+    else
+      echo "flask run --debug"
+    fi
+    return 0
+  fi
+  # Rust (web frameworks like Actix, Axum)
+  if [[ -f "Cargo.toml" ]]; then
+    echo "cargo run"
+    return 0
+  fi
+  # Go
+  if [[ -f "go.mod" ]]; then
+    echo "go run ."
+    return 0
+  fi
+  # Ruby
+  if [[ -f "Gemfile" ]]; then
+    if [[ -f "config/application.rb" ]]; then
+      echo "bundle exec rails server"
+    else
+      echo "bundle exec rackup"
+    fi
+    return 0
+  fi
+  # No recognized stack - fail loudly
+  echo ""
+  return 1
+}
 
-# Wait for server
-sleep 5
+# Find a free port in the ephemeral range
+get_free_port() {
+  # Try Python first (most reliable)
+  if command -v python3 &>/dev/null; then
+    python3 -c "import socket; s=socket.socket(); s.bind(('',0)); print(s.getsockname()[1]); s.close()" 2>/dev/null && return
+  fi
+  if command -v python &>/dev/null; then
+    python -c "import socket; s=socket.socket(); s.bind(('',0)); print(s.getsockname()[1]); s.close()" 2>/dev/null && return
+  fi
+  # Fallback: pick random port in 10000-60000 range and hope it's free
+  echo $((10000 + RANDOM % 50000))
+}
+
+# Get port override flag for dev server command
+get_port_flag() {
+  local port="$1"
+  # Node.js (Vite, Next, etc.) - needs -- before flags
+  if [[ -f "package.json" ]]; then
+    echo "-- --port $port"
+    return
+  fi
+  # Python Flask/uvicorn
+  if [[ -f "pyproject.toml" ]] || [[ -f "setup.py" ]] || [[ -f "requirements.txt" ]]; then
+    echo "--port $port"
+    return
+  fi
+  # Rust/Go typically use env vars, handled separately
+  echo ""
+}
+
+# Start dev server on random port (allows parallel runs)
+DEV_CMD=$(get_dev_server) || true
+if [[ -z "$DEV_CMD" ]]; then
+  echo -e "${RED}ERROR: No recognized project stack found${NC}"
+  echo "Supported: package.json (Node), pyproject.toml/requirements.txt (Python),"
+  echo "           Cargo.toml (Rust), go.mod (Go), Gemfile (Ruby), or Makefile with 'dev' target"
+  exit 1
+fi
+PORT=${PORT:-$(get_free_port)}
+BASE_URL="http://localhost:$PORT"
+PORT_FLAG=$(get_port_flag "$PORT")
+
+# Build full command with port
+if [[ -n "$PORT_FLAG" ]]; then
+  FULL_CMD="$DEV_CMD $PORT_FLAG"
+else
+  # Use PORT env var for frameworks that support it (Go, Rust, etc.)
+  FULL_CMD="PORT=$PORT $DEV_CMD"
+fi
+
+echo -e "${BLUE}════════════════════════════════════════════════════════════════${NC}"
+echo -e "${BLUE}  Server: $BASE_URL${NC}"
+echo -e "${BLUE}  Command: $FULL_CMD${NC}"
+echo -e "${BLUE}════════════════════════════════════════════════════════════════${NC}"
+echo ""
+eval "$FULL_CMD" &
+SERVER_PID=$!
+echo -e "${BLUE}Started server PID $SERVER_PID → $BASE_URL${NC}"
+
+# Wait for server to be ready with health check
+echo -e "${BLUE}Waiting for $BASE_URL ...${NC}"
+MAX_WAIT=30
+WAITED=0
+while ! curl -s "$BASE_URL" >/dev/null 2>&1; do
+  sleep 1
+  WAITED=$((WAITED + 1))
+  # Check if server process died
+  if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+    echo -e "${RED}ERROR: Server process died (PID $SERVER_PID)${NC}"
+    echo -e "${RED}Check command: $FULL_CMD${NC}"
+    exit 1
+  fi
+  if [[ $WAITED -ge $MAX_WAIT ]]; then
+    echo -e "${RED}ERROR: Server did not respond at $BASE_URL within ${MAX_WAIT}s${NC}"
+    echo -e "${RED}PID: $SERVER_PID | To kill: kill $SERVER_PID${NC}"
+    exit 1
+  fi
+done
+echo -e "${GREEN}✓ Server ready at $BASE_URL (${WAITED}s, PID $SERVER_PID)${NC}"
+echo ""
 
 # Trap to cleanup
 cleanup() {
   echo ""
-  echo -e "${BLUE}Cleaning up...${NC}"
+  echo -e "${BLUE}Stopping server at $BASE_URL (PID $SERVER_PID)...${NC}"
   kill $SERVER_PID 2>/dev/null || true
   agent-browser close 2>/dev/null || true
 }
 trap cleanup EXIT
-
-# Get server URL
-BASE_URL="${BASE_URL:-http://localhost:4173}"
-
-echo -e "${BLUE}Server running at $BASE_URL${NC}"
-echo ""
 
 # Track results
 PASSED=0
@@ -85,7 +210,7 @@ run_test() {
   local success=true
   for cmd in "${commands[@]}"; do
     echo "  > $cmd"
-    if ! eval "$cmd" 2>/dev/null; then
+    if ! eval "$cmd"; then
       success=false
       break
     fi
@@ -147,13 +272,16 @@ echo ""
 echo "────────────────────────────────────────────────────────────────"
 echo -e "  Passed: ${GREEN}$PASSED${NC}"
 echo -e "  Failed: ${RED}$FAILED${NC}"
+echo -e "  Server: $BASE_URL (PID $SERVER_PID)"
 echo "────────────────────────────────────────────────────────────────"
 
 if [ $FAILED -gt 0 ]; then
   echo ""
   echo -e "${RED}❌ E2E TESTS FAILED${NC}"
   echo ""
-  echo "Screenshots saved to: artifacts/e2e/"
+  echo "Screenshots: artifacts/e2e/"
+  echo "Server was: $BASE_URL (PID $SERVER_PID)"
+  echo "Kill if stuck: kill $SERVER_PID"
   exit 1
 else
   echo ""

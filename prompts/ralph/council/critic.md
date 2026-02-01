@@ -32,7 +32,8 @@ For EACH proposal above:
 2. **Challenge assumptions** - What is this proposal ASSUMING that might be wrong?
 3. **Verify claims** - Does the code actually do what they claim?
 4. **Check completeness** - Does this fully address the root cause?
-5. **Assess risk** - What's the blast radius if this is wrong?
+5. **Check integration** - Is the new code actually wired into the existing UI/API? Trace the user flow: how does a user trigger this feature?
+6. **Assess risk** - What's the blast radius if this is wrong?
 
 ## Output Format (STRICT)
 

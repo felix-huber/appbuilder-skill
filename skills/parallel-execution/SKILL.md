@@ -5,37 +5,37 @@ description: Orchestrate parallel task execution with dependency analysis and se
 
 # Parallel Task Execution
 
-Based on patterns from jdrhyne/agent-skills (task-orchestrator, parallel-task).
+Orchestrates concurrent AI agent execution while respecting file-level dependencies and providing automatic recovery from stuck tasks.
 
-## Core Concepts
+## Dependency Rules
 
-### 1. Dependency Rules
+Tasks execute based on these constraints:
 
-```
-Same file = SEQUENTIAL    → Tasks touching same file must run in order
-Different files = PARALLEL → Independent tasks can run simultaneously
-Explicit depends = WAIT    → dependsOn array enforces ordering
-Phase gates = BARRIER      → Next phase waits for current completion
-```
+| Constraint | Behavior |
+|------------|----------|
+| Same file | Sequential - tasks touching the same file run in order |
+| Different files | Parallel - independent tasks can run simultaneously |
+| `dependsOn` array | Wait - explicit ordering enforced |
+| Phase boundary | Barrier - next phase waits for current completion |
 
-### 2. Task Status Values
+## Task Status Values
 
 | Status | Meaning |
 |--------|---------|
-| `pending` | Not started yet |
+| `pending` | Not started |
 | `blocked` | Waiting on dependency |
-| `running` | Agent working on it |
-| `stuck` | Needs intervention (auto-heal) |
+| `running` | Agent working |
+| `stuck` | Needs intervention (auto-heal triggers) |
 | `error` | Failed, needs retry |
 | `complete` | Done, ready for commit |
 | `committed` | Changes committed |
-| `merged` | PR merged (if using PRs) |
+| `merged` | PR merged |
 
-### 3. Task-Graph Schema (Enhanced)
+## Task-Graph Schema
 
 ```json
 {
-  "project": "wasm-sqlite-editor",
+  "project": "my-project",
   "created": "2026-01-27T00:00:00Z",
   "phases": [
     {
@@ -48,8 +48,8 @@ Phase gates = BARRIER      → Next phase waits for current completion
           "dependsOn": [],
           "status": "pending",
           "complexity": 3,
+          "verification": ["npm run build", "npm test"],
           "startedAt": null,
-          "lastProgress": null,
           "completedAt": null,
           "agent": null,
           "attempt": 0
@@ -60,140 +60,304 @@ Phase gates = BARRIER      → Next phase waits for current completion
 }
 ```
 
-## Parallel Execution Loop
+## Execution Loop
 
-The orchestrator follows this loop (from parallel-task pattern):
+Ralph follows this cycle:
 
 ```
-LOOP:
-  1. Read task-graph.json
-  2. Find all unblocked tasks (dependsOn satisfied)
-  3. Group by parallelizability (different files = parallel)
-  4. Launch agents for parallel batch
-  5. Monitor progress
-  6. Self-heal stuck tasks
-  7. Mark completed tasks
-  8. Check phase gate
-  9. REPEAT until all tasks done
+1. Read task source (task-graph.json or beads)
+2. Find unblocked tasks (dependencies satisfied, no file conflicts)
+3. Group by parallelizability
+4. Launch agents for parallel batch
+5. Monitor progress (heartbeat every 15 min)
+6. Self-heal stuck tasks
+7. Mark completed, commit changes
+8. Check phase gate
+9. Repeat until done
 ```
 
 ### Finding Unblocked Tasks
 
-```bash
-# From task-graph.json, a task is unblocked when:
-# - status == "pending"
-# - all tasks in dependsOn have status == "complete" or "committed"
-# - no other running task shares files with this task
+A task is unblocked when:
+- `status == "pending"`
+- All `dependsOn` tasks are `complete` or `committed`
+- No running task shares files with this task
 
+```bash
 jq -r '
   .phases[].tasks as $all |
   ($all | map(select(.status == "complete" or .status == "committed")) | map(.id)) as $done |
-  ($all | map(select(.status == "running")) | map(.files) | flatten | unique) as $locked_files |
+  ($all | map(select(.status == "running")) | map(.files) | flatten | unique) as $locked |
   $all | map(select(
     .status == "pending" and
     ((.dependsOn // []) | all(. as $dep | $done | index($dep))) and
-    ((.files // []) | all(. as $f | $locked_files | index($f) | not))
+    ((.files // []) | all(. as $f | $locked | index($f) | not))
   ))
 ' task-graph.json
 ```
 
-### Parallel Batch Selection
+## Self-Healing
 
-```bash
-# From unblocked tasks, select those that don't share files
-select_parallel_batch() {
-  local tasks="$1"
-  local selected=()
-  local used_files=()
-  
-  for task in $(echo "$tasks" | jq -c '.[]'); do
-    task_files=$(echo "$task" | jq -r '.files[]')
-    conflict=false
-    
-    for f in $task_files; do
-      if [[ " ${used_files[*]} " =~ " $f " ]]; then
-        conflict=true
-        break
-      fi
-    done
-    
-    if ! $conflict; then
-      selected+=("$task")
-      used_files+=($task_files)
-    fi
-  done
-  
-  echo "${selected[@]}"
-}
-```
+Ralph automatically recovers stuck tasks based on heartbeat monitoring.
 
-## Self-Healing (from task-orchestrator)
+### Detection Thresholds
 
-### Heartbeat Check (every 15 minutes)
+| Condition | Default | Action |
+|-----------|---------|--------|
+| No progress | 20 min | Kill and restart with error context |
+| Error in output | Immediate | Capture error, restart with fix hint |
+| Agent idle at prompt | Immediate | Mark complete, check for commits |
 
-```bash
-check_task_health() {
-  local task_id="$1"
-  local started_at="$2"
-  local last_progress="$3"
-  
-  now=$(date +%s)
-  
-  # Check for stall (no progress in 20+ minutes)
-  if [[ -n "$last_progress" ]]; then
-    progress_ts=$(date -d "$last_progress" +%s)
-    mins_since=$((($now - $progress_ts) / 60))
-    
-    if [[ $mins_since -gt 20 ]]; then
-      echo "STUCK:$task_id:no_progress_${mins_since}m"
-      return 2
-    fi
-  fi
-  
-  echo "HEALTHY:$task_id"
-  return 0
-}
-```
+### Restart with Context
 
-### Self-Heal Actions
-
-| Condition | Action |
-|-----------|--------|
-| No progress 20+ min | Kill and restart with context |
-| Error in output | Capture error, restart with fix hint |
-| Waiting for input | Send appropriate response |
-| Agent prompt idle | Mark complete, check for commits |
-
-### Restart with Error Context
+When a task stalls, Ralph restarts it with the error log:
 
 ```bash
 restart_with_context() {
   local task_id="$1"
   local error_log="$2"
-  
-  # Update task status
-  update_task_status "$task_id" "pending" 
-  
-  # Increment attempt counter
+
+  update_task_status "$task_id" "pending"
   increment_task_attempt "$task_id"
-  
-  # Generate enhanced prompt with error context
+
   new_prompt="Previous attempt failed with:
 $(tail -20 "$error_log")
 
-Please fix the issue and retry. Focus on:
+Fix the issue and retry. Focus on:
 1. The specific error message
 2. What might have caused it
 3. How to avoid it this time"
-  
-  # Relaunch
+
   launch_agent "$task_id" "$new_prompt"
+}
+```
+
+## Stale Bead Reset
+
+At startup, Ralph resets any beads stuck in `IN_PROGRESS` from previous crashed runs. This prevents infinite loops where tasks appear claimed but no agent is working on them.
+
+```bash
+# Called automatically at ralph.sh startup
+reset_stale_in_progress_beads() {
+  local in_progress=$(br list --status in_progress --json)
+  jq -r '.[].id' <<< "$in_progress" | while read -r bead_id; do
+    br update "$bead_id" --status open --comment "Reset by Ralph (stale IN_PROGRESS)"
+  done
+}
+```
+
+## Lock File Mechanism
+
+Ralph uses a lock file to prevent concurrent instances:
+
+```bash
+# Lock file location
+$PROJECT_ROOT/.ralph.lock
+
+# Contains PID of running instance
+# Stale locks (dead process) are auto-removed
+# Use --override-lock <pid> to force takeover
+```
+
+If Ralph detects an existing lock:
+1. Checks if PID is still running
+2. If dead, removes stale lock automatically
+3. If alive, exits with instructions
+
+Override for agents that cannot delete files:
+```bash
+./scripts/ralph.sh --override-lock 12345 --beads 50
+```
+
+## Multi-Stack Auto-Verification
+
+Ralph auto-detects project type and runs appropriate verification commands:
+
+| Stack | Detection | Commands |
+|-------|-----------|----------|
+| Makefile | `Makefile` exists | `make lint`, `make test`, `make build` |
+| Node.js | `package.json` | `npm run lint`, `npm run typecheck`, `npm run build`, `npm test` |
+| Python | `pyproject.toml`, `setup.py`, `requirements.txt` | `ruff check .`, `mypy .`, `pytest -v` |
+| Rust | `Cargo.toml` | `cargo clippy`, `cargo check`, `cargo build`, `cargo test` |
+| Go | `go.mod` | `go vet ./...`, `go build ./...`, `go test ./...` |
+| Ruby | `Gemfile` | `bundle exec rubocop`, `bundle exec rspec` |
+
+**Makefile takes priority** - if a Makefile has the target, it's used regardless of other project files.
+
+### Fallback Verification
+
+If a task has no explicit verification, Ralph checks (in order):
+1. `--default-verify` CLI flag
+2. `RALPH_DEFAULT_VERIFY` environment variable
+3. `verification.txt` file in project root
+4. Auto-detected stack commands (test, then build)
+
+```bash
+# Set default verification via CLI
+./scripts/ralph.sh --default-verify "make test && make build" 50
+
+# Or via environment
+export RALPH_DEFAULT_VERIFY="npm test"
+./scripts/ralph.sh 50
+```
+
+## Ralph CLI Examples
+
+### Basic Execution
+
+```bash
+# 50 iterations, smart tool routing
+./scripts/ralph.sh 50
+
+# Use beads for task tracking
+./scripts/ralph.sh --beads 50
+
+# Use task-graph.json explicitly
+./scripts/ralph.sh --no-beads 50
+```
+
+### Tool Selection
+
+```bash
+# Force Claude for all tasks
+./scripts/ralph.sh --tool claude 50
+
+# Force Codex for all tasks
+./scripts/ralph.sh --tool codex 50
+
+# Smart routing (default): backend->Codex, UI->Claude
+./scripts/ralph.sh --tool smart 50
+
+# Ask for each task
+./scripts/ralph.sh --ask 50
+```
+
+### Strict Mode and Cross-Model Review
+
+```bash
+# Full strict mode: TDD enforcement, cross-model review, auto-commit
+./scripts/ralph.sh --strict --beads 50
+
+# Cross-model review: code with Claude, review with Codex
+./scripts/ralph.sh --tool claude --review-tool codex --beads 50
+
+# Require test changes in each task
+./scripts/ralph.sh --require-tests 50
+
+# Limit to 15 tasks, continue on errors
+./scripts/ralph.sh --max-tasks 15 --continue-on-error 50
+```
+
+### Verification Control
+
+```bash
+# Disable specific checks
+./scripts/ralph.sh --no-verify-tests 50
+./scripts/ralph.sh --no-verify-lint --no-verify-typecheck 50
+
+# Allow tasks without verification (not recommended)
+./scripts/ralph.sh --allow-no-verify 50
+
+# Set default verification for projects without task-level verification
+./scripts/ralph.sh --default-verify "cargo test" 50
+
+# Skip final E2E regression suite
+./scripts/ralph.sh --no-final-e2e 50
+```
+
+### Final E2E Regression Suite
+
+After all tasks complete, Ralph runs a full E2E test suite to catch regressions:
+
+- **Detection**: Auto-detects `npm run test:e2e`, `npm run e2e`, or Playwright config
+- **Per-bead tests**: Fast (~30s), focused on specific functionality
+- **Final E2E**: Slower (~5-10 min), catches cross-feature regressions
+- **Behavior**: If final E2E fails, Ralph exits with error before declaring success
+
+Disable with `--no-final-e2e` for faster iteration during development.
+
+### CI/CD Integration
+
+```bash
+# Auto-push after each commit (keeps remote in sync)
+./scripts/ralph.sh --auto-push --beads 50
+
+# Auto-create PRs for completed tasks
+./scripts/ralph.sh --auto-pr --beads 50
+
+# Specify PR base branch
+./scripts/ralph.sh --auto-pr --pr-base develop 50
+```
+
+### Self-Healing and Recovery
+
+```bash
+# Disable self-healing
+./scripts/ralph.sh --no-self-heal 50
+
+# Custom stall threshold (minutes before task is considered stuck)
+./scripts/ralph.sh --stall-threshold 30 50
+
+# Shorter timeout for simpler tasks
+./scripts/ralph.sh --stall-minutes 20 50
+
+# Override stale lock from crashed instance
+./scripts/ralph.sh --override-lock 12345 50
+```
+
+### Complex Task Timeouts
+
+If tasks timeout with **no output** (exit codes 124, 137, 143), Ralph detects this and logs:
+```
+EMPTY OUTPUT DETECTED - Claude CLI likely hung during context loading
+This task may be too complex. Consider breaking it into smaller sub-tasks.
+```
+
+**Solutions for complex tasks:**
+1. Break into smaller sub-tasks (e.g., split "stress test with 20 iterations" into focused tests)
+2. Reduce timeout: `--stall-minutes 15` to fail fast
+3. Add progress markers to bead prompts ("Log progress after each step")
+4. Implement complex E2E tests manually, use Ralph for unit/integration tests
+
+### CLI Execution Details
+
+Ralph runs AI tools with specific flags to ensure reliable automated execution:
+
+```bash
+# Claude Code (synchronous mode)
+claude -p --dangerously-skip-permissions --no-session-persistence "<prompt>"
+
+# Codex CLI
+codex exec --yolo "<prompt>"
+```
+
+**Key behaviors:**
+- `--no-session-persistence` ensures Claude runs synchronously when stdout is redirected
+- Stdin is redirected from `/dev/null` to prevent CLI from waiting for input
+- Output is captured to temp file, then copied to task log
+- Use `tail -f .beads/logs/<task-id>.log` for real-time monitoring
+
+## Phase Gates
+
+Ralph waits for all tasks in a phase to complete before starting the next:
+
+```bash
+check_phase_complete() {
+  local phase_name="$1"
+
+  tasks=$(jq -r --arg p "$phase_name" '
+    .phases[] | select(.name == $p) | .tasks
+  ' task-graph.json)
+
+  incomplete=$(echo "$tasks" | jq '[.[] | select(.status != "complete" and .status != "committed")] | length')
+
+  [[ "$incomplete" -eq 0 ]]
 }
 ```
 
 ## Task Prompt Template
 
-Based on parallel-task pattern:
+Each agent receives a structured prompt:
 
 ```markdown
 You are implementing a specific task from a development plan.
@@ -203,11 +367,6 @@ You are implementing a specific task from a development plan.
 - Sprint: {sprint_name}
 - This task: {task_id} of {total_tasks}
 
-## Related Context
-- Dependencies completed: {completed_deps}
-- Tasks in same sprint: {sibling_tasks}
-- Files you may reference: {related_files}
-
 ## Your Task
 **{task_id}: {subject}**
 
@@ -216,21 +375,16 @@ You are implementing a specific task from a development plan.
 **Description:**
 {description}
 
-**Acceptance Criteria:**
-{acceptance_criteria}
-
 **Verification:**
 {verification_commands}
 
 ## Instructions
 1. Read progress.txt for learnings from previous tasks
-2. Examine all relevant files & dependencies
+2. Examine all relevant files and dependencies
 3. Implement changes for all acceptance criteria
-4. Keep work **atomic and committable**
-5. For each file: read first, edit carefully, preserve formatting
-6. Run verification commands
-7. If pass, commit with message: "{commit_message}"
-8. Append learnings to progress.txt
+4. Run verification commands
+5. If pass, commit with message: "{commit_message}"
+6. Append learnings to progress.txt
 
 ## Critical Rules
 - Only modify files in allowed paths
@@ -241,111 +395,49 @@ You are implementing a specific task from a development plan.
 Output exactly: TASK_COMPLETE
 ```
 
-## Execution Summary Template
+## Execution Summary
 
-After each phase or full run:
+After each run, Ralph produces:
 
 ```markdown
 # Execution Summary
 
-## Tasks: {completed}/{total}
+## Tasks: 8/12
 
-### ✅ Completed
-- S1-T1: Initialize project structure
-  - Files: package.json, tsconfig.json
-  - Duration: 12 min
+### Completed
+- S1-T1: Initialize project structure (12 min)
+- S1-T2: Define core types (8 min)
 
-### ❌ Failed
+### Failed
 - S1-T3: Setup database schema
   - Error: "Cannot find module 'better-sqlite3'"
   - Attempt: 2/3
   - Next: Install native dependency
 
-### ⏳ Blocked
+### Blocked
 - S2-T1: Implement query builder
-  - Waiting on: S1-T3 (database schema)
+  - Waiting on: S1-T3
 
 ## Files Modified
 - package.json (S1-T1)
 - tsconfig.json (S1-T1)
 - src/types/index.ts (S1-T2)
-
-## Learnings Captured
-- Vite requires "moduleResolution": "bundler" in tsconfig
-- Native SQLite bindings need special WASM handling
 ```
 
-## Integration with Ralph
+## Auto PR Creation
 
-### With Parallelism
-
-```bash
-# Launch Ralph with parallel execution
-./scripts/ralph.sh --parallel 3 --fresh-eyes 50
-
-# Options:
-#   --parallel N    Run up to N agents in parallel
-#   --self-heal     Enable automatic stuck task recovery
-#   --phase-gates   Wait for phase completion before next
-```
-
-### Without Parallelism (Sequential)
-
-```bash
-# Default single-agent mode
-./scripts/ralph.sh --fresh-eyes 50
-```
-
-## Phase Gates
-
-Don't start Phase N+1 until Phase N is 100% complete:
-
-```bash
-check_phase_complete() {
-  local phase_name="$1"
-  
-  # Get all tasks in phase
-  tasks=$(jq -r --arg p "$phase_name" '
-    .phases[] | select(.name == $p) | .tasks
-  ' task-graph.json)
-  
-  # Check if all are complete
-  incomplete=$(echo "$tasks" | jq '[.[] | select(.status != "complete" and .status != "committed")] | length')
-  
-  if [[ "$incomplete" -eq 0 ]]; then
-    echo "PHASE_COMPLETE"
-    return 0
-  else
-    echo "PHASE_INCOMPLETE:$incomplete"
-    return 1
-  fi
-}
-```
-
-## Auto PR Creation (using gh CLI)
-
-When a task completes successfully, create a PR automatically:
+When `--auto-pr` is enabled, Ralph creates PRs for completed tasks:
 
 ```bash
 create_pr_for_task() {
   local task_id="$1"
   local subject="$2"
-  local issue_number="$3"  # Optional: linked issue
-  
-  # Get current branch
-  branch=$(git branch --show-current)
-  
-  # Ensure we're not on main
-  if [[ "$branch" == "main" || "$branch" == "master" ]]; then
-    echo "ERROR: Cannot create PR from main branch"
-    return 1
-  fi
-  
-  # Push the branch
+
   git push -u origin "$branch"
-  
-  # Build PR body
-  local body="## Summary
+
+  gh pr create \
+    --title "feat(${task_id}): ${subject}" \
+    --body "## Summary
 Implements task ${task_id}: ${subject}
 
 ## Changes
@@ -356,84 +448,31 @@ $(git log main..HEAD --oneline | sed 's/^/- /')
 - [ ] Manual verification done
 
 ---
-*Auto-generated by Ralph*"
-
-  # Add issue link if provided
-  if [[ -n "$issue_number" ]]; then
-    body="Closes #${issue_number}
-
-${body}"
-  fi
-  
-  # Create PR
-  gh pr create \
-    --title "feat(${task_id}): ${subject}" \
-    --body "$body" \
+*Auto-generated by Ralph*" \
     --base main
-  
-  # Capture PR number
-  pr_url=$(gh pr view --json url -q '.url')
-  echo "PR created: $pr_url"
 }
 ```
 
-### Branch Naming Convention
+### Branch Naming
 
 ```bash
-# For each task, create a branch
-git checkout -b "feat/${task_id}-$(echo "$subject" | tr ' ' '-' | tr '[:upper:]' '[:lower:]' | head -c 50)"
-
-# Examples:
-# feat/s1-t1-initialize-project-structure
-# feat/s1-t2-define-core-types
-```
-
-### Full Task Completion Flow
-
-```bash
-complete_task() {
-  local task_id="$1"
-  
-  # 1. Run verification
-  if ! run_verification "$task_id"; then
-    mark_task_error "$task_id" "Verification failed"
-    return 1
-  fi
-  
-  # 2. Commit changes
-  git add -A
-  git commit -m "feat(${task_id}): ${subject}"
-  
-  # 3. Mark task complete
-  mark_task_complete "$task_id"
-  
-  # 4. Create PR (if AUTO_PR=true)
-  if [[ "${AUTO_PR:-false}" == "true" ]]; then
-    create_pr_for_task "$task_id" "$subject" "$issue_number"
-  fi
-  
-  # 5. Return to main for next task
-  git checkout main
-  git pull
-}
-```
-
-### Ralph Config for Auto PR
-
-```bash
-# In ralph.sh
-AUTO_PR="true"           # Auto-create PRs when tasks complete
-PR_BASE_BRANCH="main"    # Base branch for PRs
+# Feature branches follow this pattern:
+feat/s1-t1-initialize-project-structure
+feat/s1-t2-define-core-types
 ```
 
 ## Quick Reference
 
-| Pattern | Source | Purpose |
-|---------|--------|---------|
-| Dependency rules | task-orchestrator | Same file = serial |
-| Loop pattern | parallel-task | Launch → monitor → repeat |
-| Self-healing | task-orchestrator | Auto-restart stuck tasks |
-| Phase gates | task-orchestrator | Barrier between phases |
-| Task prompt | parallel-task | Context-rich agent instructions |
-| Execution summary | parallel-task | Standardized reporting |
-| Auto PR | task-orchestrator | Create PRs with `gh` CLI |
+| Feature | Default | Flag |
+|---------|---------|------|
+| Tool routing | smart | `--tool <claude\|codex\|smart>` |
+| Task source | auto-detect | `--beads` / `--no-beads` |
+| Self-healing | on | `--no-self-heal` |
+| Stall threshold | 20 min | `--stall-threshold <min>` |
+| Build verification | on | `--no-verify-build` |
+| Test verification | on | `--no-verify-tests` |
+| Final E2E suite | on (if exists) | `--no-final-e2e` |
+| Auto-PR | on | `--no-auto-pr` |
+| Auto-push | off | `--auto-push` |
+| TDD enforcement | off | `--require-tests` |
+| Max attempts | 3 | `--max-attempts <n>` |

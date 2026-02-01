@@ -48,11 +48,22 @@ Given the project specification below, create a comprehensive sprint plan that:
    - Minimize cross-sprint dependencies
    - Foundation tasks (types, setup) come first
 
-7. VERIFICATION EXAMPLES:
+7. VERIFICATION EXAMPLES (use stack-appropriate commands):
+   Node.js:
    - "npm run build succeeds"
-   - "npm run test:unit passes"
-   - "curl localhost:3000/api/health returns 200"
-   - "Component renders in Storybook"
+   - "npm test passes"
+   Python:
+   - "pytest -v passes"
+   - "ruff check . clean"
+   - "flask run starts without errors"
+   Rust:
+   - "cargo build --release succeeds"
+   - "cargo test passes"
+   Go:
+   - "go build ./... succeeds"
+   - "go test ./... passes"
+   General:
+   - "curl localhost:PORT/api/health returns 200"
    - "User can click button and see result"
 
 ---
