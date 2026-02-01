@@ -6,6 +6,7 @@
 - Just make the fix, don't ask permission for small/obvious changes (see Plan Mode below)
 - If something's unclear, make a reasonable assumption and note it
 - When given a bug report: just fix it. Point at logs, errors, failing tests - then resolve them.
+- Be resourceful before asking. Read the file. Check context. Search for it. Come back with answers, not questions.
 
 ---
 
