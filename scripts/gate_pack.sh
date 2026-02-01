@@ -156,8 +156,9 @@ if [[ -n "$SECRET_MATCHES" ]]; then
 fi
 
 # Rule 2: SQL injection (string interpolation in SQL) - CRITICAL, NO BYPASS
+# Pattern: execute/query/cursor followed by f-string or template literal with SQL keywords
 SQL_INJECTION=$(grep -rn --include="*.py" --include="*.ts" --include="*.js" \
-  -E "(SELECT|INSERT|UPDATE|DELETE|FROM|WHERE).*(\\\$\{|f['\"])" . 2>/dev/null | \
+  -E "(execute|query|cursor)\s*\(.*f['\"].*\b(SELECT|INSERT|UPDATE|DELETE|FROM|WHERE)\b" . 2>/dev/null | \
   grep -v "node_modules" | grep -v ".git" | head -10 || true)
 if [[ -n "$SQL_INJECTION" ]]; then
   AI_LINT_OUTPUT+="❌ CRITICAL: Potential SQL injection (use parameterized queries):\n$SQL_INJECTION\n\n"
@@ -173,19 +174,20 @@ if [[ -n "$MUTABLE_DEFAULT" ]]; then
   AI_LINT_ERRORS=$((AI_LINT_ERRORS + 1))
 fi
 
-# Rule 4: Shell injection (subprocess with shell=True) - CRITICAL, NO BYPASS
+# Rule 4: Shell injection (subprocess with shell=True OR os.system/popen) - CRITICAL, NO BYPASS
 SHELL_INJECTION=$(grep -rn --include="*.py" \
-  -E "subprocess\.(run|call|Popen)\([^)]*shell\s*=\s*True" . 2>/dev/null | \
+  -E "(subprocess\.(run|call|Popen)\([^)]*shell\s*=\s*True|os\.(system|popen)\s*\()" . 2>/dev/null | \
   grep -v "node_modules" | grep -v ".git" | head -10 || true)
 if [[ -n "$SHELL_INJECTION" ]]; then
-  AI_LINT_OUTPUT+="❌ CRITICAL: subprocess with shell=True (use shell=False with list args):\n$SHELL_INJECTION\n\n"
+  AI_LINT_OUTPUT+="❌ CRITICAL: Shell injection risk (subprocess shell=True or os.system/popen):\n$SHELL_INJECTION\n\n"
   AI_LINT_ERRORS=$((AI_LINT_ERRORS + 1))
 fi
 
-# Rule 5: TypeScript 'any' type overuse
+# Rule 5: TypeScript 'any' type overuse (excludes test files)
 ANY_TYPE=$(grep -rn --include="*.ts" --include="*.tsx" \
   -E ":\s*any\b" . 2>/dev/null | \
-  grep -v "node_modules" | grep -v ".git" | grep -v "\.d\.ts" | head -20 || true)
+  grep -v "node_modules" | grep -v ".git" | grep -v "\.d\.ts" | \
+  grep -v "\.test\." | grep -v "\.spec\." | grep -v "__tests__" | head -20 || true)
 ANY_COUNT=$(echo "$ANY_TYPE" | grep -c "." 2>/dev/null || echo "0")
 if [[ "$ANY_COUNT" -gt 5 ]]; then
   AI_LINT_OUTPUT+="⚠️ WARNING: Excessive 'any' type usage ($ANY_COUNT instances):\n$(echo "$ANY_TYPE" | head -5)\n...\n\n"

@@ -18,7 +18,7 @@ Planning tokens are cheaper than implementation tokens. Iterate reviews until st
 | **Oracle Review** | GPT-5.2 Pro convergence loops (0 blockers/majors) |
 | **Ralph** | Autonomous task execution with fresh contexts |
 | **Beads** | Git-backed task tracking for AI agents |
-| **Lint** | 20 AI-specific rules catching common mistakes |
+| **Lint** | 8 AI-specific rules catching common mistakes |
 
 ## Iteration Requirements
 
