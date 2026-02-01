@@ -8,7 +8,16 @@ Based on jdrhyne/agent-skills parallel-task pattern.
 
 You are implementing a specific task from a development plan.
 
-## Context
+## Context Primer
+
+Before starting, load project context:
+```bash
+/context prime
+```
+
+This loads `.claude/context/*.md` files with project overview, tech stack, and current status.
+
+## Task Context
 
 - **Project**: {{project_name}}
 - **Plan**: artifacts/03-plan.md
@@ -48,7 +57,7 @@ Determine if this is a testable task by checking tags:
 - Tags containing: setup, config, docs, integration, verify → TDD optional
 
 **If TDD is required:**
-1. Create test file FIRST (e.g., `feature.test.ts` next to `feature.ts`)
+1. Create test file FIRST (use project conventions: `test_*.py`, `*.test.ts`, `*_test.go`, etc.)
 2. Write tests based on acceptance criteria or provided test specs
 3. Run tests - they should FAIL (red phase)
 4. Implement code to make tests pass (green phase)
@@ -69,12 +78,16 @@ Determine if this is a testable task by checking tags:
 2. Examine all relevant files & dependencies first
 3. If anything is ambiguous, check the plan and UX spec
 4. Implement changes for ALL acceptance criteria
-5. Write any additional unit tests for edge cases discovered
-6. Keep work **atomic and committable**
-7. For each file: read first, edit carefully, preserve formatting
-8. Run verification commands
-9. **MANDATORY: Self-review with fresh eyes** (see below)
-10. If all verifications pass, output `<promise>TASK_COMPLETE</promise>` followed by details
+5. **INTEGRATION CHECK**: Trace the user flow end-to-end. Ask yourself:
+   - "How does a user actually trigger this feature?"
+   - "Is my new code wired into the existing UI/API?"
+   - Creating a hook/component/util is NOT enough - it must be called from somewhere
+6. Write any additional unit tests for edge cases discovered
+7. Keep work **atomic and committable**
+8. For each file: read first, edit carefully, preserve formatting
+9. Run verification commands
+10. **MANDATORY: Self-review with fresh eyes** (see below)
+11. If all verifications pass, output `<promise>TASK_COMPLETE</promise>` followed by details
     (Do NOT commit or push - Ralph handles branching/commits/PRs)
     See "When Complete" section below for the exact output format.
 
@@ -93,6 +106,25 @@ If you encounter an error:
 2. Check if it's a missing dependency (install it)
 3. Check if it's a type error (fix the types)
 4. If stuck for >5 minutes, document the blocker and output: `<promise>TASK_BLOCKED</promise>`
+
+## Build Verification Requirements
+
+Ralph will run these checks after you complete. Your task is NOT complete until ALL pass:
+- Lint command (0 errors)
+- Type check command (0 errors)
+- Build command (succeeds)
+- Test command (all pass)
+
+Check the project for verification commands:
+- **Makefile**: `make lint`, `make test`, `make build`
+- **Node.js**: `npm run lint`, `npm run typecheck`, `npm run build`, `npm test`
+- **Python**: `ruff check .`, `mypy .`, `pytest -v`
+- **Rust**: `cargo clippy`, `cargo check`, `cargo build`, `cargo test`
+- **Go**: `go vet ./...`, `go build ./...`, `go test ./...`
+
+**IMPORTANT:** If lint/typecheck fails on files you did NOT modify, you MUST still fix them. Pre-existing issues block your task.
+
+Do NOT output `TASK_COMPLETE` if any verification step fails.
 
 ## 👀 Self-Review With Fresh Eyes (MANDATORY - 4 PASSES)
 

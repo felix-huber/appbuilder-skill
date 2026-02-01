@@ -1,0 +1,65 @@
+# AppBuilder Skill Configuration
+# Single source of truth for all settings
+
+version: "1.0"
+
+# Context System
+context:
+  enabled: true
+  auto_prime: true  # Load context at session start
+  max_size_kb: 200  # Prevent context window overflow
+  files:
+    - .claude/context/project-overview.md
+    - .claude/context/tech-context.md
+    - .claude/context/project-structure.md
+    - .claude/context/status.md
+
+# Linting (AI-specific rules)
+lint:
+  enabled: true
+  extends: recommended  # Uses standard linters + 8 AI-specific rules
+
+  performance:
+    max_execution_time_ms: 10000  # 10s hard limit
+    incremental: true             # Only lint changed files
+
+  # Rule severity tiers:
+  # - critical: Cannot bypass (secrets, injection)
+  # - security: Requires SAFETY(ticket) + human review
+  # - quality: Allows SAFETY comment
+  # - style: Info only
+
+  rules:
+    # Override defaults here:
+    # python.mutable-default: off
+    # typescript.any-type: warning
+
+  profiles:
+    strict:
+      # All rules at max severity
+      threshold: 0
+
+    ci:
+      # Stricter for CI
+      typescript.any-type: error
+      python.unused-import: error
+
+# Artifacts
+artifacts:
+  frontmatter: true       # Add status comments to artifacts
+  auto_version: false     # Manual versioning for now
+  conflict_resolution: fail_fast
+
+# Parallelization
+parallelization:
+  enabled: true
+  max_concurrent_agents: 3
+  conflict_detection: true  # Check files_affected overlap
+
+# Audit Trail
+audit:
+  enabled: true
+  format: jsonl
+  location: .beads/audit/
+  retention_days: 90
+  integrity: hmac_sha256

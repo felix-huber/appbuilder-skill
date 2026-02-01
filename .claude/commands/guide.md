@@ -7,6 +7,9 @@ Check which artifacts exist and tell the user exactly where they are and what to
 **Always start by running these commands to understand current state:**
 
 ```bash
+# 0. Load project context (new in v2)
+/context prime
+
 # 1. What artifacts exist?
 ls -la artifacts/*.md artifacts/*.json 2>/dev/null
 
@@ -90,14 +93,17 @@ Phase 4: VERIFICATION
 
 Read the artifacts directory:
 - `artifacts/00-brief.md` - Brief
-- `artifacts/01-prd.md` - PRD  
+- `artifacts/01-prd.md` - PRD
 - `artifacts/02-ux.md` - UX spec
 - `artifacts/03-plan.md` - Implementation plan
 - `artifacts/04-task-graph.json` - Task graph (always created)
 - `artifacts/04-beads-setup.sh` - Beads setup script (optional)
 - `.beads/` directory - Active beads tasks (if using beads)
 
-Also check `artifacts/06-oracle/*/issues.json` for convergence status.
+Also check:
+- `artifacts/06-oracle/*/issues.json` - Convergence status
+- `tasks/todo.md` - Session-level task tracking (for plan mode)
+- `tasks/lessons.md` - Captured lessons from mistakes
 
 ## Decision Logic
 
