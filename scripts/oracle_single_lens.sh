@@ -84,13 +84,13 @@ echo ""
 
 # Create temp prompt file with Request ID prepended
 TEMP_PROMPT=$(mktemp)
+trap 'rm -f "$TEMP_PROMPT"' EXIT
+
 echo "$ORACLE_REQUEST_ID" > "$TEMP_PROMPT"
 echo "" >> "$TEMP_PROMPT"
 cat "$PROMPT_FILE" >> "$TEMP_PROMPT"
 
 ./scripts/oracle_browser_run.sh "$TEMP_PROMPT" "$OUT_FILE" "$@"
-
-rm -f "$TEMP_PROMPT"
 
 echo ""
 echo "📊 Normalizing to issues.json"
