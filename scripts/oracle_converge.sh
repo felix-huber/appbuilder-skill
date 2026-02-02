@@ -179,6 +179,32 @@ fi
 # Build lens list based on --lens argument
 if [ "$LENS_ARG" = "all" ]; then
   LENSES_TO_RUN=("${ALL_LENSES[@]}")
+
+  # For PRD phase: ask if simplicity lens should be included
+  if [ "$KIND" = "prd" ] && [ "$INTERACTIVE" = true ]; then
+    echo ""
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${CYAN}  OPTIONAL: Simplicity Lens${NC}"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo "  The simplicity lens checks for over-engineering and scope creep."
+    echo "  It's useful for catching unnecessary complexity early, but may"
+    echo "  flag intentional architectural decisions as issues."
+    echo ""
+    echo -n "  Include simplicity lens? [y/N]: "
+    read -r SIMPLICITY_CHOICE
+    if [[ ! "$SIMPLICITY_CHOICE" =~ ^[Yy]$ ]]; then
+      # Remove simplicity from lenses
+      LENSES_TO_RUN=()
+      for l in "${ALL_LENSES[@]}"; do
+        [ "$l" != "simplicity" ] && LENSES_TO_RUN+=("$l")
+      done
+      echo -e "  ${YELLOW}→ Simplicity lens excluded${NC}"
+    else
+      echo -e "  ${GREEN}→ Simplicity lens included${NC}"
+    fi
+    echo ""
+  fi
 else
   # Validate single lens
   VALID_LENS=false
