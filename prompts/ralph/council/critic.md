@@ -116,6 +116,12 @@ If NO: [explain the disagreement]
 
 If INVESTIGATE: [what specific information would resolve the uncertainty]
 
+### Self-Critique (MANDATORY)
+
+**Limitations of my evaluation:**
+- [what I couldn't verify without full codebase access]
+- [assumption I made about the proposals]
+
 ---
 
 ## Guidelines

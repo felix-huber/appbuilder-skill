@@ -67,6 +67,12 @@ Only include if CRITICAL to the current task. Do NOT expand scope.
 - `[path]` - [why]
 - `[path]` - [why]
 
+### Self-Critique (MANDATORY)
+
+**Limitations of my search:**
+- [area I might have missed]
+- [assumption about where to look that could be wrong]
+
 ---
 
 ## Search Strategies
