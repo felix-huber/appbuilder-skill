@@ -416,7 +416,7 @@ $(cat "$PROMPT_FILE")" \
     echo "After saving, press ENTER to continue (or type 'skip' to skip this lens)..."
     read -r USER_RESPONSE
 
-    if [ "$USER_RESPONSE" = "skip" ]; then
+    if [[ "${USER_RESPONSE,,}" = "skip" ]]; then
       echo -e "${YELLOW}Skipping lens '$LENS' as requested.${NC}"
       break
     fi
