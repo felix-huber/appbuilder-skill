@@ -193,7 +193,7 @@ if [ "$LENS_ARG" = "all" ]; then
     echo ""
     echo -n "  Include simplicity lens? [y/N]: "
     read -r SIMPLICITY_CHOICE
-    if [[ ! "$SIMPLICITY_CHOICE" =~ ^[Yy](es)?$ ]]; then
+    if [[ ! "${SIMPLICITY_CHOICE,,}" =~ ^y(es)?$ ]]; then
       # Remove simplicity from lenses
       LENSES_TO_RUN=()
       for l in "${ALL_LENSES[@]}"; do
