@@ -1,5 +1,7 @@
 # GEMINI: Full Codebase Analysis + Alternatives
 
+**Request ID: {{request_id}}**
+
 You have access to the FULL source code thanks to your 1M+ token context window. Use this advantage to see patterns that others miss.
 
 ## Your Unique Strength
@@ -154,6 +156,19 @@ Use this to propose DIFFERENT approaches that haven't been tried.
 **What would increase confidence:**
 - [if we knew X - be specific about what information is missing]
 - [if we verified Y - suggest a specific check]
+
+### Self-Critique (MANDATORY)
+
+**Weaknesses in my proposals:**
+1. [concrete weakness shared by all alternatives]
+2. [specific risk in my highest-confidence alternative]
+
+**Assumptions I might be wrong about:**
+- [assumption 1 that underlies my analysis]
+- [assumption 2 that could invalidate my recommendations]
+
+**What I might have missed in the codebase:**
+- [area I didn't fully explore]
 
 ---
 

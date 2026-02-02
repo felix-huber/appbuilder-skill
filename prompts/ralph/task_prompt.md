@@ -43,10 +43,20 @@ This loads `.claude/context/*.md` files with project overview, tech stack, and c
 **Acceptance Criteria:**
 {{acceptance_criteria}}
 
+**Negative Criteria (must NOT happen):**
+{{negative_criteria}}
+
 **Verification:**
 ```bash
 {{verification_commands}}
 ```
+
+**Expected Output:**
+```
+{{expected_output}}
+```
+
+**Context Budget:** {{context_budget_tokens}} tokens (fail fast if exceeded)
 
 ## Instructions
 
@@ -99,13 +109,34 @@ Determine if this is a testable task by checking tags:
 - 🎯 Focus on this specific task only
 - 🧹 **SIMPLICITY CHECK**: Would a senior engineer say this is overcomplicated? If yes, simplify.
 
-## Error Handling
+## Idempotence Requirement
+
+Your implementation MUST be safe to run multiple times:
+- Database migrations: use `IF NOT EXISTS`
+- File writes: write to temp file, then rename (atomic)
+- Side effects: guard with existence checks
+- Tests: clean up their own state
+- API calls: handle "already exists" gracefully
+
+## Error Handling & Failure Taxonomy
+
+Categorize failures and respond appropriately:
+
+| Failure Type | Examples | Action |
+|--------------|----------|--------|
+| **Retriable** | Network timeout, rate limit, transient error | Auto-retry with backoff (max 3) |
+| **Fixable** | Missing dependency, type error, lint failure | Fix it yourself |
+| **Blocking** | Missing file from another task, unclear requirement | Output `TASK_BLOCKED` |
+| **Partial Success** | Tests pass but coverage dropped, builds but with warnings | Flag for review, continue |
+| **Unrecoverable** | Fundamental architecture issue, impossible requirement | Output `TASK_FAILED` |
 
 If you encounter an error:
-1. Read the error message carefully
-2. Check if it's a missing dependency (install it)
-3. Check if it's a type error (fix the types)
-4. If stuck for >5 minutes, document the blocker and output: `<promise>TASK_BLOCKED</promise>`
+1. **Categorize it** using the table above
+2. Read the error message carefully
+3. For retriable: wait and retry
+4. For fixable: fix it yourself
+5. For blocking: document clearly and output `TASK_BLOCKED`
+6. For unrecoverable: explain why and output `TASK_FAILED`
 
 ## Build Verification Requirements
 
@@ -192,7 +223,10 @@ Needs: [what's required to unblock]
 | `{{files}}` | task-graph.json → tasks[n].files |
 | `{{description}}` | task-graph.json → tasks[n].description |
 | `{{acceptance_criteria}}` | task-graph.json → tasks[n].acceptance |
+| `{{negative_criteria}}` | task-graph.json → tasks[n].negativeCriteria |
 | `{{verification_commands}}` | task-graph.json → tasks[n].verification |
+| `{{expected_output}}` | task-graph.json → tasks[n].expectedOutput |
+| `{{context_budget_tokens}}` | task-graph.json → tasks[n].contextBudget (default: 32000) |
 | `{{allowed_paths}}` | task-graph.json → tasks[n].allowedPaths |
 | `{{completed_deps}}` | IDs of completed tasks this depends on |
 | `{{sibling_tasks}}` | Other tasks in same sprint |
