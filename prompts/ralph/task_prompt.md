@@ -56,7 +56,12 @@ This loads `.claude/context/*.md` files with project overview, tech stack, and c
 {{expected_output}}
 ```
 
-**Context Budget:** {{context_budget_tokens}} tokens (fail fast if exceeded)
+**Context Budget:** {{context_budget_tokens}} tokens
+
+If you estimate you'll exceed this budget before completing:
+1. Complete what you can with highest-priority acceptance criteria
+2. Output `TASK_BLOCKED` with "Context budget insufficient"
+3. List remaining work for a follow-up task
 
 ## Instructions
 
@@ -153,14 +158,16 @@ Check the project for verification commands:
 - **Rust**: `cargo clippy`, `cargo check`, `cargo build`, `cargo test`
 - **Go**: `go vet ./...`, `go build ./...`, `go test ./...`
 
-**IMPORTANT:** If lint/typecheck fails on files you did NOT modify, you MUST still fix them. Pre-existing issues block your task.
+**IMPORTANT:** If lint/typecheck fails on files you did NOT modify:
+- If file is in `{{allowed_paths}}` → fix it
+- If file is outside `{{allowed_paths}}` → output `TASK_BLOCKED` with details
 
 Do NOT output `TASK_COMPLETE` if any verification step fails.
 
-## 👀 Self-Review With Fresh Eyes (MANDATORY - 4 PASSES)
+## 👀 Self-Review With Fresh Eyes (MANDATORY)
 
 Before outputting TASK_COMPLETE, you MUST review your own code with "fresh eyes".
-**This is an iterative loop - do 4 passes minimum: look → fix → look → fix → look → fix → look → verify clean.**
+**Iterate until you find nothing to fix.**
 
 Each pass:
 1. **Re-read all code you wrote or modified** - look at it as if seeing it for the first time
@@ -169,10 +176,10 @@ Each pass:
 4. **Check for missing error handling** - what happens when things fail?
 5. **Check for inconsistencies** - naming, patterns, style matching existing code
 6. **Fix anything you find** - don't just note it, actually fix it
-7. **Go back to step 1** - repeat until pass 4 finds nothing to fix
+7. **Go back to step 1** - repeat until a pass finds nothing to fix
 
-Only output TASK_COMPLETE after completing 4 passes. This self-review is cheap (same context)
-and catches many issues before the expensive external review.
+Only output TASK_COMPLETE after a clean pass with nothing to fix. This self-review is cheap
+(same context) and catches many issues before the expensive external review.
 
 ## When Complete
 

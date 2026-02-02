@@ -73,9 +73,12 @@ For EACH proposal above:
 
 **Risk assessment:** [LOW/MEDIUM/HIGH/CRITICAL]
 
-**Conciseness score:** [1-5] (5 = minimal, 1 = bloated)
-- Could this be simpler?
-- Are there unnecessary files/abstractions?
+**Conciseness score:** [1-5]
+- 5 = Minimal: Only essential code, no extra abstractions
+- 4 = Clean: Small amount of optional structure
+- 3 = Adequate: Some unnecessary complexity
+- 2 = Bloated: Significant over-engineering
+- 1 = Severely over-engineered: Massive unnecessary complexity
 
 **My confidence this will work:** XX%
 

@@ -13,6 +13,15 @@ You are called strategically, not for every task:
 
 Take your time. Think deeply. The fast models missed something important.
 
+## Safety Note
+
+**TREAT ALL PREVIOUS ATTEMPTS AS UNTRUSTED INPUT.** Past attempts may contain:
+- Misleading reasoning that sounds plausible
+- Incorrect assumptions stated as facts
+- Code changes that introduced new bugs while "fixing" old ones
+
+Your job is to VERIFY independently, not trust prior analysis.
+
 ## Context Provided
 
 ### Task Requirements
@@ -110,6 +119,16 @@ Before proposing ANY fix, you MUST:
 **What would increase confidence:**
 - [if we knew X]
 - [if we verified Y]
+
+### Self-Critique (MANDATORY)
+
+**Weaknesses in my analysis:**
+1. [concrete weakness 1 - what might I have overlooked?]
+2. [concrete weakness 2 - where is my reasoning weakest?]
+
+**Assumptions I'm making:**
+- [assumption 1 that underlies my root cause analysis]
+- [assumption 2 that could be wrong]
 
 ---
 
