@@ -67,9 +67,9 @@ If you estimate you'll exceed this budget before completing:
 
 ### TDD Workflow (MANDATORY for feature/component/api tasks)
 
-Determine if this is a testable task by checking tags:
-- Tags containing: core, engine, api, components, ui, worker, data → **TDD REQUIRED**
-- Tags containing: setup, config, docs, integration, verify → TDD optional
+Determine if this is a testable task by checking the subject and description:
+- Keywords: core, engine, api, component, ui, worker, data, feature, handler → **TDD REQUIRED**
+- Keywords: setup, config, docs, integration, verify, scaffold → TDD optional
 
 **If TDD is required:**
 1. Create test file FIRST (use project conventions: `test_*.py`, `*.test.ts`, `*_test.go`, etc.)
