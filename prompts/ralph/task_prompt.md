@@ -70,6 +70,7 @@ If you estimate you'll exceed this budget before completing:
 Determine if this is a testable task by checking the subject and description:
 - Keywords: core, engine, api, component, ui, worker, data, feature, handler → **TDD REQUIRED**
 - Keywords: setup, config, docs, integration, verify, scaffold → TDD optional
+- No matching keywords → TDD optional (explain your reasoning)
 
 **If TDD is required:**
 1. Create test file FIRST (use project conventions: `test_*.py`, `*.test.ts`, `*_test.go`, etc.)
