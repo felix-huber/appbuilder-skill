@@ -98,7 +98,7 @@ Determine if this is a testable task by checking tags:
    - "Is my new code wired into the existing UI/API?"
    - Creating a hook/component/util is NOT enough - it must be called from somewhere
 6. Write any additional unit tests for edge cases discovered
-7. Keep work **atomic and committable**
+7. Keep work **atomic** (one logical change - Ralph handles git)
 8. For each file: read first, edit carefully, preserve formatting
 9. Run verification commands
 10. **MANDATORY: Self-review with fresh eyes** (see below)

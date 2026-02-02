@@ -143,6 +143,15 @@ When choosing between approaches:
 
 **LEARNING:** [key insight from this attempt]
 
+### Self-Critique (MANDATORY)
+
+**Weaknesses in my implementation:**
+1. [concrete weakness 1 - what edge case might fail?]
+2. [concrete weakness 2 - what assumption am I making?]
+
+**What I'm uncertain about:**
+- [area where I'm least confident]
+
 ---
 
 ## Guidelines
