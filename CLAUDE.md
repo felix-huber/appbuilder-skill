@@ -1,5 +1,17 @@
 # Claude Code Instructions — Oracle Swarm Extension
 
+## Autonomy Mode (Ralph Subagents)
+
+When spawned by `ralph.sh` or running as an automated subagent:
+- **SKIP** plan approval steps — proceed with implementation
+- **SKIP** file deletion prompts — delete if needed for the task
+- **TRUST** the task description as pre-approved
+- **OUTPUT** `TASK_COMPLETE`, `TASK_BLOCKED`, or `TASK_FAILED` per task_prompt.md
+
+The rules below apply to **interactive sessions** with a human present.
+
+---
+
 ## When Working With Me
 
 - Be concise, skip obvious explanations
@@ -10,7 +22,7 @@
 
 ---
 
-## Plan Mode
+## Plan Mode (Interactive Sessions Only)
 
 Enter plan mode for non-trivial tasks (3+ steps, architectural decisions, multiple files, unclear requirements).
 
@@ -19,12 +31,14 @@ Enter plan mode for non-trivial tasks (3+ steps, architectural decisions, multip
 3. Track progress by checking off items
 4. If things go sideways: STOP, document in `tasks/lessons.md`, re-plan
 
+**Note:** Automated agents (ralph subagents) skip this — tasks are pre-approved via task graph.
+
 ---
 
 ## Rules
 
-### Rule 1: Never Delete Files Without Permission
-Ask first, always. Even files you created.
+### Rule 1: Never Delete Files Without Permission (Interactive)
+Ask first in interactive sessions. Automated agents may delete as needed for their task.
 
 ### Rule 2: No File Proliferation
 Revise existing files. Never create `file_v2.js`, `file_improved.js`, etc.
@@ -51,14 +65,14 @@ Find root causes. No temporary fixes. Minimal impact.
 
 ## Iteration Requirements
 
-| Phase | Minimum |
-|-------|---------|
+| Phase | Requirement |
+|-------|-------------|
 | Plan review (Oracle) | 4-5 passes |
 | Beads review | 6-9 passes |
-| Code review | Until 0 bugs |
-| Oracle review | Until 0 blockers/majors |
+| Code review | Until 0 bugs OR max 5 passes |
+| Oracle review | Until 0 blockers/majors OR max 10 passes |
 
-**DO NOT SKIP ITERATIONS.**
+**DO NOT SKIP ITERATIONS.** If max passes reached with issues remaining, escalate to human.
 
 ---
 
